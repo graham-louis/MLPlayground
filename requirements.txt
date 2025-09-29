@@ -1,0 +1,15 @@
+# Core
+streamlit
+pandas
+numpy
+seaborn
+matplotlib
+
+# Data profiling
+ydata-profiling
+streamlit-ydata-profiling
+pygwalker
+
+# ML stack
+pycaret
+pycaret[analysis]
