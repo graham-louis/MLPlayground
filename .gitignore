@@ -1,0 +1,95 @@
+##############################
+# Python / Streamlit / Docker
+##############################
+
+# Byte-compiled / caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtualenvs / envs
+.env
+.env.*
+.venv/
+venv/
+env/
+ENV/
+venv.bak/
+
+# IDEs / editors
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Python packaging / build artifacts
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+.wheelhouse/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage/
+.tox/
+.mypy_cache/
+.pyre/
+.ruff_cache/
+.cache/
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# Project data (keep example datasets in repo under a dedicated folder if needed)
+data/
+data/*.csv
+sourcedata.csv
+yield_data.csv
+# Avoid ignoring all CSVs globally (some small example datasets may be intentionally committed)
+
+# Models / binary artifacts
+*.pkl
+*.joblib
+best_model_classification.pkl
+best_model_regression.pkl
+
+# PyCaret / experiment artifacts
+.pycaret/
+pylab.png
+
+# Docker / local environment files
+docker-compose.override.yml
+.env.docker
+.dockerignore
+
+# Git attributes / binary handling
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.tar
+*.zip
+
+# Misc
+*.orig
+*~
+*.swp
+*.bak
+*.tmp
+.python-version

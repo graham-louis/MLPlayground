@@ -1,0 +1,9 @@
+services:
+  app:
+    build: .
+    container_name: streamlit_server
+    ports:
+      - 8501:8501
+      - 5678:5678
+    volumes:
+      - .:/code

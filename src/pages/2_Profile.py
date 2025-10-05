@@ -14,10 +14,10 @@ st.sidebar.header("Profile Data")
 
 st.title("Auto-Exploratory Data Analysis")
 
-if os.path.exists("sourcedata.csv"):
-    df = pd.read_csv("sourcedata.csv", index_col=None)
-    if 'df' not in st.session_state:
-        st.session_state['df'] = df
+# if os.path.exists("sourcedata.csv"):
+#     df = pd.read_csv("sourcedata.csv", index_col=None)
+#     if 'df' not in st.session_state:
+#         st.session_state['df'] = df
 
 df = st.session_state.df
 

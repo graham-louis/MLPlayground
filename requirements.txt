@@ -4,6 +4,8 @@ pandas
 numpy
 seaborn
 matplotlib
+debugpy
+daymetpy
 
 # Data profiling
 ydata-profiling
@@ -12,4 +14,3 @@ pygwalker
 
 # ML stack
 pycaret
-pycaret[analysis]
