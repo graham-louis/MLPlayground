@@ -53,5 +53,3 @@ class Soil(Base):
     silt_pct = Column(Float, nullable=True)
     clay_pct = Column(Float, nullable=True)
     # Add more soil properties as needed
-
-# Additional models (Weather, Soil, etc.) can be added incrementally.
