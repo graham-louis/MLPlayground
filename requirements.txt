@@ -14,3 +14,8 @@ pygwalker
 
 # ML stack
 pycaret
+
+# Database and migrations
+SQLAlchemy>=2.0
+alembic
+psycopg2-binary  # For PostgreSQL

@@ -7,3 +7,22 @@ services:
       - 5678:5678
     volumes:
       - .:/code
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://mluser:mlpass@db:5432/mlplayground
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15
+    container_name: mlplayground_db
+    environment:
+      POSTGRES_USER: mluser
+      POSTGRES_PASSWORD: mlpass
+      POSTGRES_DB: mlplayground
+    ports:
+      - 5432:5432
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
