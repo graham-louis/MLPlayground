@@ -30,13 +30,12 @@ def get_weather(
                 "id": w.id,
                 "year": w.year,
                 "state": w.state,
-                "district": w.district,
                 "county": w.county,
-                "county_ansi": w.county_ansi,
                 "avg_temp": w.avg_temp,
                 "precipitation": w.precipitation,
-                "min_temp": w.min_temp,
-                "max_temp": w.max_temp,
+                "vp": w.vp,
+                "srad": w.srad,
+                "gdd": w.gdd
                 # Add more fields as needed
             }
             for w in results

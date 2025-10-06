@@ -23,5 +23,5 @@ EXPOSE 5678
 
 # Command to run the Streamlit app with the debugger
 # --wait-for-client will pause the app until the debugger attaches
-# CMD ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "--wait-for-client", "-m", "streamlit", "run", "src/AutoML.py", "--server.runOnSave", "false"]
-CMD ["streamlit", "run", "src/AutoML.py", "--server.runOnSave", "false"]
+CMD ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "--wait-for-client", "-m", "streamlit", "run", "src/AutoML.py", "--server.runOnSave", "false"]
+#CMD ["streamlit", "run", "src/AutoML.py", "--server.runOnSave", "false"]

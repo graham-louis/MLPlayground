@@ -2,9 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import numpy as np
-from utils.getYieldData import get_yield_data
-from utils.getSoilData import get_soil_data
-from utils.getWeatherData import *
+from utils.db_access import get_yield_data, get_soil_data, get_weather_data
 import requests
 
 
@@ -49,64 +47,48 @@ def get_counties_for_state(state_name):
         print(f"Error fetching county list: {e}")
         return []
 
-if st.button("Download data"):
+crop = st.selectbox("Select crop for analysis", ["SOYBEANS", "CORN", "WHEAT", "COTTON", "PEANUTS"])
 
+if st.button("Download data"):
     print("Button Pressed")
     state_name = "North Carolina"
-    counties = get_counties_for_state(state_name=state_name)
     start_year = 1980
     end_year = 2022
+    
 
-    st.text(f"Getting data for all counties in {state_name}")
+    st.text(f"Getting data for {crop} in {state_name} ({start_year}-{end_year})")
 
-    st.dataframe(counties)
+    # Fetch from backend API
+    yield_data = get_yield_data(state=state_name, crop=crop)
+    soil_data_df = get_soil_data(state=state_name)
+    weather_data_df = get_weather_data(state=state_name)
 
-    if os.path.exists("data/soil_data.csv") and os.path.exists("data/annual_weather.csv"):
-        st.info("Data found, reading now...")
-        soil_data_df = pd.read_csv("data/soil_data.csv", index_col=None)
-        annual_weather_df = pd.read_csv("data/annual_weather.csv", index_col=None)
-        daily_weather_df = pd.read_csv("data/daily_weather.csv", index_col=None)
-    else:
-        st.info("Downloading data now...")
-        soil_data = []
-        annual_weather = []
-        daily_weather = []
-        for county in counties:
-            county_soil_data = get_soil_data(county_name=county, state_name=state_name)
-            # add rows 
-            soil_data.append(county_soil_data)
+    # Data integrity/diagnostics section
+    st.subheader("Data Diagnostics & Integrity Checks")
+    st.write(f"Yield rows: {len(yield_data)}")
+    st.write(f"Soil rows: {len(soil_data_df)}")
+    st.write(f"Weather rows: {len(weather_data_df)}")
+    st.write("Sample yield data:")
+    st.dataframe(yield_data.head())
+    st.write("Sample soil data:")
+    st.dataframe(soil_data_df.head())
+    st.write("Sample weather data:")
+    st.dataframe(weather_data_df.head())
 
-            county_annual_weather, county_daily_weather = get_weather_daymet(county_name=county, state_name=state_name, start_year=start_year, end_year=end_year)
-            annual_weather.append(county_annual_weather)
-            daily_weather.append(county_daily_weather)
-        
-        soil_data_df = pd.concat(soil_data, ignore_index=True)
-        soil_data_df.to_csv("data/soil_data.csv", index=None)
-
-        annual_weather_df = pd.concat(annual_weather, ignore_index=True)
-        annual_weather_df.to_csv("data/annual_weather.csv", index=None)
-        daily_weather_df = pd.concat(daily_weather, ignore_index=True)
-        daily_weather_df.to_csv("data/daily_weather.csv", index=None)
-
-        # st.success("Data download complete!", description="Soil and weather data saved to CSV files.")
-
-    # Conver annual weather county names to upper case to match yield data
-    annual_weather_df['County'] = annual_weather_df['County'].str.upper()
-
-    yield_data = pd.read_csv("data/crop_yield_1980-2022.csv", index_col=None)
-    # Select Year, County, Commodity, Value
-    yield_data = yield_data[['Year', 'County', 'State', 'Commodity', 'Value']]
-    # Filter for commodity = CORN
-    yield_data = yield_data[(yield_data['Commodity'] == 'SOYBEANS') & (yield_data['Year'] >= start_year) & (yield_data['Year'] <= end_year)]
-    yield_data = yield_data.rename(columns={'Value': 'Yield'})
-    yield_data = yield_data[['Year', 'County', 'Yield']]
     # Merge yield and weather data on Year and County
-    df = pd.merge(yield_data, annual_weather_df, on=['Year', 'County'], how='left')
+    if 'year' in yield_data.columns and 'county' in yield_data.columns and 'year' in weather_data_df.columns and 'county' in weather_data_df.columns:
+        merged = pd.merge(yield_data, weather_data_df, on=['year', 'county'], how='left', indicator=True)
+        missing_weather = merged[merged['_merge'] == 'left_only']
+        st.write(f"Rows in yield data with no weather match: {len(missing_weather)}")
+        if not missing_weather.empty:
+            st.dataframe(missing_weather.head())
+        st.session_state['df'] = merged
+    else:
+        st.warning("Could not merge yield and weather data: missing columns.")
 
-    st.session_state['df'] = df
-
-    # yield_data = get_yield_data(NASS_API_KEY, county_name=counties[0], state_name=state_name, start_year=start_year, end_year=end_year)
-    # yield_data.to_csv("yield_data.csv")
+    st.subheader("Merged Data Sample")
+    if 'df' in st.session_state:
+        st.dataframe(st.session_state['df'].head())
 
 # if os.path.exists("sourcedata.csv"):
 #     df = pd.read_csv("sourcedata.csv", index_col=None)
