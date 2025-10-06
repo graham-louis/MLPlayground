@@ -14,6 +14,8 @@ pygwalker
 
 # ML stack
 pycaret
+shap
+lime
 
 # Database and migrations
 SQLAlchemy>=2.0

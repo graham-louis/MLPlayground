@@ -21,62 +21,73 @@ if 'model_problem_type' not in st.session_state:
 
 df = st.session_state.df
 
+target = 'yield'
+problem = 'Regression'  # default
+
+# Default important features (edit as needed)
+default_features = [
+    'avg_temp', 'precipitation', 'gdd', 'sand_pct', 'clay_pct', 'ph', 'organic_matter'
+]
+available_features = [col for col in default_features if col in df.columns and col != target]
+
+# This is a placeholder for feature selection report
+# --- MRMR Feature Selection ---
+from sklearn.feature_selection import mutual_info_regression
+import numpy as np
+if 'mrmr_report' not in st.session_state:
+    mrmr_candidates = [col for col in df.columns if col != target and pd.api.types.is_numeric_dtype(df[col]) and col != 'year']
+    if mrmr_candidates:
+        X = df[mrmr_candidates].fillna(df[mrmr_candidates].mean())
+        y = df[target]
+        mi = mutual_info_regression(X, y, random_state=0)
+        mrmr_df = pd.DataFrame({'feature': mrmr_candidates, 'relevance': mi})
+        mrmr_df = mrmr_df.sort_values('relevance', ascending=False)
+        st.session_state['mrmr_report'] = mrmr_df
+
+
+# --- MRMR Feature Selection Report ---
+st.subheader("Feature Selection: MRMR Report")
+if 'mrmr_report' in st.session_state:
+    st.dataframe(st.session_state['mrmr_report'])
+    st.caption("MRMR = Minimum Redundancy Maximum Relevance. Top features are most relevant to the target and least redundant with each other.")
+else:
+    st.info("MRMR report not available. Run feature selection in the profiling step or upload a report to st.session_state['mrmr_report'].")
 
 # Model Configuration
-
 with st.container(border=True):
     st.subheader("Model Configuration")
-
+    st.markdown("Select which features to use for training. MRMR top features are recommended.")
     col1, col2 = st.columns(2)
-
     with col1:
-        target = st.selectbox("Select your target", df.columns)
-        features = st.multiselect("Features", df.columns[df.columns != target])
-
+        if 'mrmr_report' in st.session_state:
+            mrmr_features = st.session_state['mrmr_report']['feature'].tolist()
+            features = st.multiselect("Features", df.columns[df.columns != target], default=mrmr_features[:5])
+        else:
+            features = st.multiselect("Features", df.columns[df.columns != target])
     with col2:
-        problem = st.radio("Problem Type", ["Classification", "Regression"])
+        st.write("Selected features:")
+        st.write(features)
 
 
 # Model Training
 
-if df[target].hasnans:
-    st.warning(f"Target column {target} contains missing values. Rows with missing values will be dropped.")
-    df = df.dropna(subset=[target])
 
 if st.button("Train Model"):
-    st.session_state.model_problem_type = problem
-
     with st.spinner("Training Models..."):
-        if problem == "Classification":
-            pcc.setup(df, target=target)
-            setup_df = pcc.pull()
-            st.info("ML Experiment Settings (Classification)")
-            st.dataframe(setup_df)
-
-            best_model = pcc.compare_models()
-            compare_df = pcc.pull()
-            st.info("Comparison results (Classification)")
-            st.dataframe(compare_df)
-
-            pcc.save_model(best_model, 'best_model_classification')
-            pcc.plot_model(best_model, plot='confusion_matrix', display_format='streamlit')
-
-        else:
-            pcr.setup(df, target=target)
-            setup_df = pcr.pull()
-            st.info("ML Experiment Settings (Regression)")
-            st.dataframe(setup_df)
-
-            best_model = pcr.compare_models()
-            compare_df = pcr.pull()
-            st.info("Comparison results (Regression)")
-            st.dataframe(compare_df)
-
-            pcr.save_model(best_model, 'best_model_regression')
-            # show a regression-appropriate plot
-            # pcr.plot_model(best_model, plot='residuals', display_format='streamlit')
-            pcr.plot_model(best_model, plot='learning', display_format='streamlit')
-
+        train_df = df[features + [target]] if features else df
+        pcr.setup(train_df, target=target)
+        # Store the actual features used by PyCaret after preprocessing
+        used_features = pcr.get_config('X_train').columns.tolist()
+        st.session_state['best_model_features'] = used_features
+        setup_df = pcr.pull()
+        st.info("ML Experiment Settings (Regression)")
+        st.dataframe(setup_df)
+        best_model = pcr.compare_models()
+        compare_df = pcr.pull()
+        st.info("Comparison results (Regression)")
+        st.dataframe(compare_df)
+        pcr.save_model(best_model, 'best_model_regression')
+        pcr.plot_model(best_model, plot='learning', display_format='streamlit')
     st.session_state.best_model = best_model
     st.success("Model training complete!")
 
@@ -91,19 +102,11 @@ if st.session_state.best_model:
         st.code(str(st.session_state.best_model))
 
         # Define plot lists based on problem type
-        if st.session_state.model_problem_type == "Classification":
-            plot_options = [
-                'auc', 'confusion_matrix', 'pr', 'class_report', 
-                'boundary', 'feature', 'learning', 'calibration', 
-                'dimension', 'lift', 'gain'
-            ]
-            default_plot = 'confusion_matrix'
-        else: # Regression
-            plot_options = [
-                'residuals', 'error', 'cooks', 'learning', 'vc', 
-                'manifold', 'feature', 'prediction_error'
-            ]
-            default_plot = 'residuals'
+        plot_options = [
+            'residuals', 'error', 'cooks', 'learning', 'vc', 
+            'manifold', 'feature', 'prediction_error'
+        ]
+        default_plot = 'residuals'
         
         # Create a dropdown to select the plot
         plot_choice = st.selectbox(
@@ -114,8 +117,6 @@ if st.session_state.best_model:
         
         # Display the selected plot
         st.write(f"Displaying '{plot_choice.replace('_', ' ').title()}' Plot:")
-        if st.session_state.model_problem_type == "Classification":
-            pcc.plot_model(st.session_state.best_model, plot=plot_choice, display_format='streamlit')
-        else:
-            pcr.plot_model(st.session_state.best_model, plot=plot_choice, display_format='streamlit')
+            
+        pcr.plot_model(st.session_state.best_model, plot=plot_choice, display_format='streamlit')
             
