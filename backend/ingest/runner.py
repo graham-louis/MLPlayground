@@ -90,7 +90,7 @@ def upsert_yield_to_db(df, engine):
 def main():
     """Default CSV-driven bulk ingestion (no CLI args).
 
-    Reads `data/crop_yield_1980_2022.csv` from the repo and for each
+    Reads `/crop_yield_1980_2022.csv` from the repo and for each
     County/State group computes the year range and ingests soil, weather,
     and yield (via local CSV fallback) data into the database.
     """
@@ -98,7 +98,7 @@ def main():
     engine = create_engine(db_url)
 
     print("\n--- BULK INGESTION FROM CSV (default) ---")
-    csv_path = os.path.join(os.path.dirname(__file__), '../../data/crop_yield_1980-2022.csv')
+    csv_path = os.path.join(os.path.dirname(__file__), '../../crop_yield_1980-2022.csv')
     print(f"Reading CSV: {csv_path}")
     try:
         df = pd.read_csv(csv_path)

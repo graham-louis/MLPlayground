@@ -2,11 +2,11 @@ import os
 def fetch_and_transform_yield_csv_fallback(api_key, county_name, state_name, start_year, end_year, csv_path=None):
     """
     Filler function: Reads local CSV for North Carolina yield data and mimics the API output format.
-    Only supports North Carolina data in /data/crop_yield_1980_2022.csv.
+    Only supports North Carolina data in /crop_yield_1980_2022.csv.
     """
     print("[FILLER] Reading local CSV for yield data...")
     if csv_path is None:
-        csv_path = os.path.join(os.path.dirname(__file__), '../../data/crop_yield_1980-2022.csv')
+        csv_path = os.path.join(os.path.dirname(__file__), '../../crop_yield_1980-2022.csv')
     df = pd.read_csv(csv_path)
     # Filter for county, state, year, and any Data Item that contains 'YIELD'
     # NOTE: include all commodities (do not filter for only CORN)
