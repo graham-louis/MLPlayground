@@ -93,3 +93,4 @@ docker-compose.override.yml
 *.bak
 *.tmp
 .python-version
+.github/copilot-instructions.md

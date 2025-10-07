@@ -48,9 +48,19 @@ def get_counties_for_state(state_name):
     except requests.exceptions.RequestException as e:
         print(f"Error fetching county list: {e}")
         return []
+    
+
+# upload data as csv
+file = st.file_uploader("Upload Your Dataset Here")
+if file:
+    df = pd.read_csv(file, index_col=None)
+    df.to_csv("sourcedata.csv", index=None)
+    st.dataframe(df)
+    st.session_state['df'] = df # Store in session state for persistence accross pages
+
 
 if st.button("Download data"):
-
+    pass
     print("Button Pressed")
     state_name = "North Carolina"
     counties = get_counties_for_state(state_name=state_name)
@@ -103,7 +113,7 @@ if st.button("Download data"):
     # Merge yield and weather data on Year and County
     df = pd.merge(yield_data, annual_weather_df, on=['Year', 'County'], how='left')
 
-    st.session_state['df'] = df
+    # st.session_state['df'] = df
 
     # yield_data = get_yield_data(NASS_API_KEY, county_name=counties[0], state_name=state_name, start_year=start_year, end_year=end_year)
     # yield_data.to_csv("yield_data.csv")

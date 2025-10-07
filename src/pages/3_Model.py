@@ -30,11 +30,11 @@ with st.container(border=True):
     col1, col2 = st.columns(2)
 
     with col1:
-        target = st.selectbox("Select your target", df.columns)
+        target = st.selectbox("Select your target", df.columns, index= len(df.columns) - 1)
         features = st.multiselect("Features", df.columns[df.columns != target])
 
     with col2:
-        problem = st.radio("Problem Type", ["Classification", "Regression"])
+        problem = st.radio("Problem Type", ["Classification", "Regression"], index=1)
 
 
 # Model Training
@@ -45,8 +45,13 @@ if df[target].hasnans:
 
 if st.button("Train Model"):
     st.session_state.model_problem_type = problem
+    # Use only selected features + target
+    if features:
+        df = df[features + [target]]
+        
 
     with st.spinner("Training Models..."):
+        st.write(f"Using features: {features} and target: {target}")
         if problem == "Classification":
             pcc.setup(df, target=target)
             setup_df = pcc.pull()
@@ -62,7 +67,7 @@ if st.button("Train Model"):
             pcc.plot_model(best_model, plot='confusion_matrix', display_format='streamlit')
 
         else:
-            pcr.setup(df, target=target)
+            pcr.setup(df, target=target, fold=2, train_size=0.9)
             setup_df = pcr.pull()
             st.info("ML Experiment Settings (Regression)")
             st.dataframe(setup_df)
@@ -75,7 +80,7 @@ if st.button("Train Model"):
             pcr.save_model(best_model, 'best_model_regression')
             # show a regression-appropriate plot
             # pcr.plot_model(best_model, plot='residuals', display_format='streamlit')
-            pcr.plot_model(best_model, plot='learning', display_format='streamlit')
+            # pcr.plot_model(best_model, plot='learning', display_format='streamlit')
 
     st.session_state.best_model = best_model
     st.success("Model training complete!")
