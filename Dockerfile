@@ -13,6 +13,10 @@ RUN apt-get update && apt-get install -y \
 COPY ./requirements.txt ./
 RUN pip install --upgrade -r requirements.txt
 
+# Create and populate the tables in DB
+RUN PYTHONPATH=. python db/init_db.py
+RUN PYTHONPATH=. python backend/ingest/runner.py
+
 # Copy the rest of the application code into the container
 COPY . .
 
@@ -23,5 +27,5 @@ EXPOSE 5678
 
 # Command to run the Streamlit app with the debugger
 # --wait-for-client will pause the app until the debugger attaches
-CMD ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "--wait-for-client", "-m", "streamlit", "run", "src/AutoML.py", "--server.runOnSave", "false"]
-#CMD ["streamlit", "run", "src/AutoML.py", "--server.runOnSave", "false"]
+# CMD ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "--wait-for-client", "-m", "streamlit", "run", "src/AutoML.py", "--server.runOnSave", "false"]
+CMD ["streamlit", "run", "src/AutoML.py", "--server.runOnSave", "false"]
