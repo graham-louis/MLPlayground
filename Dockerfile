@@ -7,18 +7,21 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
     libpq-dev \
+    #postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Install pip requirements
 COPY ./requirements.txt ./
 RUN pip install --upgrade -r requirements.txt
 
-# Create and populate the tables in DB
-RUN PYTHONPATH=. python db/init_db.py
-RUN PYTHONPATH=. python backend/ingest/runner.py
-
 # Copy the rest of the application code into the container
 COPY . .
+
+
+# # Entrypoint script will handle DB init/ingest at container start if needed
+# COPY entrypoint.sh /entrypoint.sh
+# RUN chmod +x /entrypoint.sh
+# ENTRYPOINT ["/entrypoint.sh"]
 
 # Expose the port Streamlit runs on
 EXPOSE 8501
