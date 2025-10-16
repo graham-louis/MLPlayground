@@ -77,14 +77,32 @@ with st.container(border=True):
     with col2:
         st.write("Selected features:")
         st.write(features)
+    
+    training_scope = st.radio(
+        "Select Training Data Scope",
+        ("Train model on entire dataset", "Train model on specific ag district"),
+        key="training_scope"
+    )
+
+    if training_scope == "Train model on specific ag district":
+        unique_districts = sorted(df['district'].unique().tolist())
+        selected_districts = st.multiselect("Select Agricultural Districts", options=unique_districts)
+
+        # Filter the dataframe based on selection
+        if selected_districts:
+            df_train = df[df['district'].isin(selected_districts)]
+        else:
+            # If no district is selected yet, prevent the app from crashing
+            st.warning("Please select at least one district to proceed.")
+            st.stop()
+    else:
+        df_train = df.copy()
 
 
 # Model Training
-
-
 if st.button("Train Model"):
     with st.spinner("Training Models..."):
-        train_df = df[features + [target]] if features else df
+        train_df = df_train[features + [target]] if features else df_train
         pcr.setup(train_df, target=target)
         # Store the actual features used by PyCaret after preprocessing
         used_features = pcr.get_config('X_train').columns.tolist()
