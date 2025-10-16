@@ -98,6 +98,10 @@ if st.button("Load data"):
             merged = merged.rename(columns={'value': 'yield'})
 
         st.session_state['df'] = merged
+        
+        # Store the selected filters in session state
+        st.session_state['selected_crop'] = crop
+        st.session_state['selected_year_range'] = (start_year, end_year)
     else:
         st.warning("Could not merge yield and weather data: missing columns.")
 

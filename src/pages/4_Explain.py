@@ -4,9 +4,19 @@ import shap
 import lime
 import lime.lime_tabular
 import matplotlib.pyplot as plt
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+from src.utils.filter_display import display_selected_filters, display_filters_in_sidebar
 
 st.set_page_config(page_title="Explainability", page_icon="🧠")
 st.title("Model Explainability: SHAP & LIME")
+
+# Display selected filters
+display_selected_filters()
+
+# Display filters in sidebar
+display_filters_in_sidebar()
 
 st.markdown("""
 **Why Explainability?**

@@ -1,16 +1,26 @@
 import streamlit as st
 import pandas as pd
 import streamlit.components.v1 as components
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 # ML stuff
 import pycaret.classification as pcc
 import pycaret.regression as pcr
+from src.utils.filter_display import display_selected_filters, display_filters_in_sidebar
 
 st.set_page_config(page_title="Create Models", page_icon="📈")
 
 st.sidebar.header("Create Models")
 
 st.title("Machine Learning")
+
+# Display selected filters
+display_selected_filters()
+
+# Display filters in sidebar
+display_filters_in_sidebar()
 
 # Load session state variables if they exist
 

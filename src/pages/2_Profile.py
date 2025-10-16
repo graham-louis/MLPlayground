@@ -2,10 +2,13 @@ import streamlit as st
 import pandas as pd
 import seaborn as sns
 import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 # Profiling capability
 from ydata_profiling import ProfileReport
 from streamlit_ydata_profiling import st_profile_report
+from src.utils.filter_display import display_selected_filters, display_filters_in_sidebar
 
 
 st.set_page_config(page_title="Profile Data", page_icon="🔎")
@@ -13,6 +16,12 @@ st.set_page_config(page_title="Profile Data", page_icon="🔎")
 st.sidebar.header("Profile Data")
 
 st.title("Auto-Exploratory Data Analysis")
+
+# Display selected filters
+display_selected_filters()
+
+# Display filters in sidebar
+display_filters_in_sidebar()
 
 # if os.path.exists("sourcedata.csv"):
 #     df = pd.read_csv("sourcedata.csv", index_col=None)
