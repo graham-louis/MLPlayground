@@ -18,11 +18,6 @@ RUN pip install --upgrade -r requirements.txt
 COPY . .
 
 
-# # Entrypoint script will handle DB init/ingest at container start if needed
-# COPY entrypoint.sh /entrypoint.sh
-# RUN chmod +x /entrypoint.sh
-# ENTRYPOINT ["/entrypoint.sh"]
-
 # Expose the port Streamlit runs on
 EXPOSE 8501
 # Expose the port the debugger will listen on

@@ -114,7 +114,7 @@ if st.button("Train Model"):
         compare_df = pcr.pull()
         st.info("Comparison results (Regression)")
         st.dataframe(compare_df)
-        pcr.save_model(best_model, 'best_model_regression')
+        # pcr.save_model(best_model, 'best_model_regression')
         pcr.plot_model(best_model, plot='learning', display_format='streamlit')
     st.session_state.best_model = best_model
     st.success("Model training complete!")
