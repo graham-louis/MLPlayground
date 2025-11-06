@@ -3,9 +3,10 @@ import os
 import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from backend.ingest.ssurgo import fetch_and_transform_soil
-from backend.ingest.nldas import fetch_and_transform_weather
-from backend.ingest.nass import fetch_and_transform_yield_csv_fallback
+from backend.ingest.soil_ssurgo import fetch_and_transform_soil
+from backend.ingest.climate_nldas import fetch_and_transform_weather
+from backend.ingest.crop_nass import fetch_and_transform_yield_csv_fallback
+from backend.ingest.crop_nass import fetch_and_transform_yield
 
 
 def upsert_soil_to_db(df, engine):
@@ -137,7 +138,9 @@ def main():
             weather_df = weather_df[0]
         upsert_weather_to_db(weather_df, engine)
         # Yield (local CSV fallback)
-        yield_df = fetch_and_transform_yield_csv_fallback(None, county, state, start_y, end_y)
+        # yield_df = fetch_and_transform_yield_csv_fallback(None, county, state, start_y, end_y)
+        yield_df = fetch_and_transform_yield("77B33341-6DF0-3F4A-ADBE-518926034592", county, state, start_y, end_y)
+
         upsert_yield_to_db(yield_df, engine)
 
 if __name__ == "__main__":
