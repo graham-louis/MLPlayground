@@ -56,7 +56,7 @@ def upsert_weather_to_db(df, engine):
             obj.srad = row.get('srad')  # Solar radiation
             session.add(obj)
             session.commit()
-            print(f"Upserted weather data for {row['County']}, {row['State']}, {row['Year']}")
+            # print(f"Upserted weather data for {row['County']}, {row['State']}, {row['Year']}")
 
 def upsert_yield_to_db(df, engine):
     """
