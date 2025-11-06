@@ -25,3 +25,6 @@ psycopg2-binary  # For PostgreSQL
 # Backend API
 fastapi
 uvicorn[standard]
+
+# Configuration
+python-dotenv

@@ -96,7 +96,14 @@ if st.button("Load data"):
         # Rename value to Yield
         if 'value' in merged.columns:
             merged = merged.rename(columns={'value': 'yield'})
+        
+        merged = merged[merged["county"] != "OTHER (COMBINED) COUNTIES"]
+        merged = merged[merged["county"] != "OTHER COUNTIES"]
+        
 
+        st.write(f"""Counties: {merged["county"].unique().tolist()}""")
+        
+        
         st.session_state['df'] = merged
         
         # Store the selected filters in session state
