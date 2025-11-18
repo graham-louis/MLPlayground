@@ -3,10 +3,10 @@ import os
 import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from backend.ingest.soil_ssurgo import fetch_and_transform_soil
-from backend.ingest.climate_nldas import fetch_and_transform_weather
-from backend.ingest.crop_nass import fetch_and_transform_yield_csv_fallback
-from backend.ingest.crop_nass import fetch_and_transform_yield
+from backend.ingest.ssurgo import fetch_and_transform_soil
+from backend.ingest.nldas import fetch_and_transform_weather
+from backend.ingest.nass import fetch_and_transform_yield_csv_fallback, fetch_and_transform_yield
+from backend.config import get_nass_api_key, get_database_url
 
 
 def upsert_soil_to_db(df, engine):
@@ -56,7 +56,7 @@ def upsert_weather_to_db(df, engine):
             obj.srad = row.get('srad')  # Solar radiation
             session.add(obj)
             session.commit()
-            print(f"Upserted weather data for {row['County']}, {row['State']}, {row['Year']}")
+            # print(f"Upserted weather data for {row['County']}, {row['State']}, {row['Year']}")
 
 def upsert_yield_to_db(df, engine):
     """
@@ -93,10 +93,20 @@ def main():
 
     Reads `/crop_yield_1980_2022.csv` from the repo and for each
     County/State group computes the year range and ingests soil, weather,
-    and yield (via local CSV fallback) data into the database.
+    and yield (via NASS API) data into the database.
     """
-    db_url = os.environ.get("DATABASE_URL", "sqlite:///mlplayground.db")
+    db_url = get_database_url()
     engine = create_engine(db_url)
+    
+    # Get NASS API key from config
+    api_key = get_nass_api_key()
+    if not api_key:
+        print("WARNING: NASS_API_KEY not found in environment variables or .env file.")
+        print("         Falling back to CSV fallback for yield data.")
+        print("         To use the NASS API, set NASS_API_KEY in your .env file or environment.")
+        use_api = False
+    else:
+        use_api = True
 
     print("\n--- BULK INGESTION FROM CSV (default) ---")
     csv_path = os.path.join(os.path.dirname(__file__), '../../crop_yield_1980-2022.csv')
@@ -127,7 +137,10 @@ def main():
         if dry_run:
             print(f"  - DRY RUN: would fetch soil for {county}, {state}")
             print(f"  - DRY RUN: would fetch weather for {county}, {state} years {start_y}-{end_y}")
-            print(f"  - DRY RUN: would ingest yield from local CSV for {county}, {state} years {start_y}-{end_y}")
+            if use_api:
+                print(f"  - DRY RUN: would fetch yield from NASS API for {county}, {state} years {start_y}-{end_y}")
+            else:
+                print(f"  - DRY RUN: would ingest yield from local CSV for {county}, {state} years {start_y}-{end_y}")
             continue
         # Soil
         soil_df = fetch_and_transform_soil(county, state)
@@ -137,10 +150,11 @@ def main():
         if isinstance(weather_df, tuple):
             weather_df = weather_df[0]
         upsert_weather_to_db(weather_df, engine)
-        # Yield (local CSV fallback)
-        # yield_df = fetch_and_transform_yield_csv_fallback(None, county, state, start_y, end_y)
-        yield_df = fetch_and_transform_yield("77B33341-6DF0-3F4A-ADBE-518926034592", county, state, start_y, end_y)
-
+        # Yield (NASS API or CSV fallback)
+        if use_api:
+            yield_df = fetch_and_transform_yield(api_key, county, state, start_y, end_y)
+        else:
+            yield_df = fetch_and_transform_yield_csv_fallback(county, state, start_y, end_y)
         upsert_yield_to_db(yield_df, engine)
 
 if __name__ == "__main__":

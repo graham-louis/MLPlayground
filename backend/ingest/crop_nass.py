@@ -1,5 +1,5 @@
 import os
-def fetch_and_transform_yield_csv_fallback(api_key, county_name, state_name, start_year, end_year, csv_path=None):
+def fetch_and_transform_yield_csv_fallback(county_name, state_name, start_year, end_year, csv_path=None):
     """
     Filler function: Reads local CSV for North Carolina yield data and mimics the API output format.
     Only supports North Carolina data in /crop_yield_1980_2022.csv.
