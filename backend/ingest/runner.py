@@ -1,12 +1,33 @@
 import sys
 import os
 import pandas as pd
+import requests
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-from backend.ingest.ssurgo import fetch_and_transform_soil
-from backend.ingest.nldas import fetch_and_transform_weather
-from backend.ingest.nass import fetch_and_transform_yield_csv_fallback, fetch_and_transform_yield
+from backend.ingest.soil_ssurgo import fetch_and_transform_soil
+from backend.ingest.climate_nldas import fetch_and_transform_weather
+from backend.ingest.crop_nass import fetch_and_transform_yield_csv_fallback, fetch_and_transform_yield
 from backend.config import get_nass_api_key, get_database_url
+
+
+def get_counties_for_state(state_name):
+    """Queries the SDM API to get a list of all counties in a given state."""
+    print(f"Fetching county list for {state_name}...")
+    sdm_api_url = "https://sdmdataaccess.nrcs.usda.gov/tabular/post.rest"
+    query = f"SELECT areaname FROM sacatalog WHERE areaname LIKE '%, {state_name}'"
+
+    try:
+        response = requests.post(sdm_api_url, data={"FORMAT": "JSON", "QUERY": query})
+        response.raise_for_status()
+        data = response.json()['Table']
+        if len(data) < 2: return []
+
+        # Extract just the county name from "County Name, State"
+        county_list = [row[0].split(" County,")[0] for row in data[1:]]
+        return sorted(county_list)
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching county list: {e}")
+        return []
 
 
 def upsert_soil_to_db(df, engine):

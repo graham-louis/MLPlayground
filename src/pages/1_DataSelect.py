@@ -22,7 +22,34 @@ st.markdown("""
 state_name = "North Carolina"
 start_year = 1980
 end_year = 2022
-crop = st.selectbox("Select crop for analysis", ["SOYBEANS", "CORN", "WHEAT", "COTTON", "PEANUTS"])
+
+# Populate crop selectbox with unique crops from backend for the selected state.
+# Fallback to a small hard-coded list when the backend call fails or returns no crops.
+default_crops = ["SOYBEANS", "CORN", "WHEAT", "COTTON", "PEANUTS"]
+try:
+    # Try to fetch yield rows for the chosen state and extract unique crop names.
+    yield_rows_for_state = get_yield_data(state=state_name)
+    if not yield_rows_for_state.empty and 'crop' in yield_rows_for_state.columns:
+        # Normalize crop names to uppercase strings and sort them for display
+        crops = sorted(
+            yield_rows_for_state['crop']
+            .dropna()
+            .astype(str)
+            .str.upper()
+            .unique()
+            .tolist()
+        )
+        if not crops:
+            crops = default_crops
+            st.info("No crops found for the selected state; using default crop list.")
+    else:
+        crops = default_crops
+        st.info("Could not find crop values in backend response; using default crop list.")
+except Exception as e:
+    crops = default_crops
+    st.warning(f"Failed to load crops from backend; using default list. Error: {e}")
+
+crop = st.selectbox("Select crop for analysis", crops)
 
 start_year, end_year = st.slider("Select a range of years to include in training", 1980, 2022, (1980, 2022))
 
