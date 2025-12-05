@@ -5,7 +5,7 @@ import numpy as np
 from utils.db_access import get_yield_data, get_soil_data, get_weather_data
 import requests
 
-st.set_page_config(page_title="AutoML")
+st.set_page_config(page_title="About")
 
 st.write("# MLPlayground: Interactive Crop Yield AutoML Platform")
 

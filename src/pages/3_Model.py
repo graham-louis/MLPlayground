@@ -71,7 +71,9 @@ with st.container(border=True):
     with col1:
         if 'mrmr_report' in st.session_state:
             mrmr_features = st.session_state['mrmr_report']['feature'].tolist()
-            features = st.multiselect("Features", df.columns[df.columns != target], default=mrmr_features[:5])
+            exclude_cols = [target, 'year', 'district', 'county', 'crop', 'state', 'county_ansi', 'unit']
+            features = [col for col in df.columns if col not in exclude_cols]
+            features = st.multiselect("Features", [col for col in df.columns if col not in exclude_cols], default=mrmr_features)
         else:
             features = st.multiselect("Features", df.columns[df.columns != target])
     with col2:
@@ -85,6 +87,7 @@ with st.container(border=True):
     )
 
     if training_scope == "Train model on specific ag district":
+        print(df)
         unique_districts = sorted(df['district'].unique().tolist())
         selected_districts = st.multiselect("Select Agricultural Districts", options=unique_districts)
 
@@ -110,11 +113,11 @@ if st.button("Train Model"):
         setup_df = pcr.pull()
         st.info("ML Experiment Settings (Regression)")
         st.dataframe(setup_df)
-        best_model = pcr.compare_models()
+        best_model = pcr.compare_models(include=["gbr", "rf", "ada", "et", "lr"])
         compare_df = pcr.pull()
         st.info("Comparison results (Regression)")
         st.dataframe(compare_df)
-        pcr.save_model(best_model, 'best_model_regression')
+        # pcr.save_model(best_model, 'best_model_regression')
         pcr.plot_model(best_model, plot='learning', display_format='streamlit')
     st.session_state.best_model = best_model
     st.success("Model training complete!")
