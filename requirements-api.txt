@@ -1,0 +1,17 @@
+# Backend / API Framework
+fastapi
+uvicorn[standard]
+requests
+
+# Data Handling (Needed for fetching/cleaning before DB)
+pandas
+numpy
+daymetpy 
+
+# Database
+SQLAlchemy>=2.0
+alembic
+psycopg2-binary
+
+# Config
+python-dotenv

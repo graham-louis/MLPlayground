@@ -2,11 +2,12 @@ import requests
 import pandas as pd
 
 
-def get_yield_data(state=None, crop=None, year=None):
+def get_yield_data(state=None, crop=None, start_year=None, end_year=None):
     params = {}
     if state: params['state'] = str.upper(state)
     if crop: params['crop'] = str.upper(crop)
-    if year: params['year'] = year
+    if start_year: params['start_year'] = start_year
+    if end_year: params['end_year'] = end_year
     resp = requests.get('http://api:8000/yields/', params=params)
     data = resp.json()
     return pd.DataFrame(data)
