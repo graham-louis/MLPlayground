@@ -4,7 +4,7 @@ from sqlalchemy import create_engine, select, and_
 from sqlalchemy.orm import Session
 from db.models import Yield
 from backend.ingest.runner import upsert_yield_to_db
-from backend.ingest.nass import fetch_and_transform_yield, fetch_and_transform_yield_csv_fallback
+from backend.ingest.crop_nass import fetch_and_transform_yield, fetch_and_transform_yield_csv_fallback
 from backend.config import get_nass_api_key
 import os
 
