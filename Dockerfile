@@ -1,34 +1,23 @@
-# For more information, please refer to https://aka.ms/vscode-docker-python
 FROM python:3.11-slim
 
 WORKDIR /code
 
+# Added libgomp1 (often needed for ML libraries)
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
     libpq-dev \
-    #postgresql-client \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install pip requirements
 COPY ./requirements.txt ./
-RUN pip install --upgrade -r requirements.txt
 
-# Copy the rest of the application code into the container
+# THE FIX: --no-cache-dir reduces size by ~500MB
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
 COPY . .
 
+EXPOSE 8501 5678
 
-# # Entrypoint script will handle DB init/ingest at container start if needed
-# COPY entrypoint.sh /entrypoint.sh
-# RUN chmod +x /entrypoint.sh
-# ENTRYPOINT ["/entrypoint.sh"]
-
-# Expose the port Streamlit runs on
-EXPOSE 8501
-# Expose the port the debugger will listen on
-EXPOSE 5678
-
-# Command to run the Streamlit app with the debugger
-# --wait-for-client will pause the app until the debugger attaches
-# CMD ["python", "-m", "debugpy", "--listen", "0.0.0.0:5678", "--wait-for-client", "-m", "streamlit", "run", "src/AutoML.py", "--server.runOnSave", "false"]
 CMD ["streamlit", "run", "src/AutoML.py", "--server.runOnSave", "false"]

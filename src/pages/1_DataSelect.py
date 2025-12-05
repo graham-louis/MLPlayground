@@ -21,10 +21,10 @@ st.markdown("""
     
 state_name = "North Carolina"
 start_year = 1980
-end_year = 2022
+end_year = 2024
 crop = st.selectbox("Select crop for analysis", ["SOYBEANS", "CORN", "WHEAT", "COTTON", "PEANUTS"])
 
-start_year, end_year = st.slider("Select a range of years to include in training", 1980, 2022, (1980, 2022))
+start_year, end_year = st.slider("Select a range of years to include in training", 1980, 2024, (1980, 2024))
 
 if st.button("Load data"):
 
@@ -42,6 +42,7 @@ if st.button("Load data"):
     st.write(f"Weather rows: {len(weather_data_df)}")
     st.write("Sample yield data:")
     st.dataframe(yield_data.head())
+    st.dataframe(yield_data.tail())
     st.write("Sample soil data:")
     st.dataframe(soil_data_df.head())
     st.write("Sample weather data:")
