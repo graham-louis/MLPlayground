@@ -65,12 +65,11 @@ def fetch_and_transform_yield(api_key, county_name, state_name, start_year, end_
         'agg_level_desc': 'COUNTY',
         'state_name': state_name.upper(),
         'county_name': county_name.upper(),
+        'year__LE': end_year, # API can't seem to handle the less than for year
         'year__GE': start_year,
-        'year__LE': end_year,
         'format': 'JSON'
     }
     response = requests.get(base_url, params=params)
-    print(response.url)
     if response.status_code == 200:
         data = response.json().get('data', [])
         if not data:
@@ -80,11 +79,13 @@ def fetch_and_transform_yield(api_key, county_name, state_name, start_year, end_
         # --- Data Cleaning ---
         # Keep commodity information when present
         if 'commodity_desc' in yield_df.columns:
-            cols = ['year', 'Value', 'commodity_desc']
+            cols = ['year', 'Value', 'commodity_desc', 'asd_desc', 'county_ansi', 'unit_desc']
             yield_df = yield_df[[c for c in cols if c in yield_df.columns]].rename(columns={
                 'year': 'Year',
                 'Value': 'CropYield_bu_ac',
-                'commodity_desc': 'Crop'
+                'commodity_desc': 'Crop',
+                'asd_desc': 'district',
+                'unit_desc': 'unit'
             })
         else:
             yield_df = yield_df[['year', 'Value']].rename(columns={

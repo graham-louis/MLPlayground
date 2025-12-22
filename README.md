@@ -153,5 +153,3 @@ Intended audience
 - Agronomists and extension agents who want quick, transparent forecasts for decision support.
 - Data scientists exploring domain-specific feature engineering and model explainability in agriculture.
 - Developers interested in building production-ready AutoML pipelines with clear separation between UI, API, and data layers.
-
-If you'd like, I can add a separate `docs/DATA_FLOW.md` that diagrams the end-to-end pipeline (data sources → ETL → API → Streamlit → Model + Explanations) and include sample commands to reproduce the Piedmont vs Coastal Plains analysis used in our experiments.

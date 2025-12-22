@@ -6,6 +6,7 @@ from db.models import Yield
 from backend.ingest.runner import upsert_yield_to_db
 from backend.ingest.crop_nass import fetch_and_transform_yield, fetch_and_transform_yield_csv_fallback
 from backend.config import get_nass_api_key
+from backend.ingest.runner import get_counties_for_state
 import os
 
 router = APIRouter()
@@ -58,8 +59,14 @@ def check_and_fetch_missing_years(state: Optional[str], crop: Optional[str],
         
         combinations = session.execute(query).all()
         
+        # No data from specified state exists, fetch all
         if not combinations:
-            # No existing data matching filters, can't determine what to fetch
+            counties = get_counties_for_state(state)
+            for county in counties:
+                yield_df = fetch_and_transform_yield(
+                                api_key, county, state_name, fetch_start, fetch_end
+                            )
+                upsert_yield_to_db(yield_df, engine)
             return
         
         # Get NASS API key
