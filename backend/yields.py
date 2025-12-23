@@ -7,7 +7,10 @@ from backend.ingest.runner import upsert_yield_to_db
 from backend.ingest.crop_nass import fetch_and_transform_yield, fetch_and_transform_yield_csv_fallback
 from backend.config import get_nass_api_key
 from backend.ingest.runner import get_counties_for_state
+from backend.orchestrator import ensure_data_for
 import os
+import logging
+logger = logging.getLogger("uvicorn")
 
 router = APIRouter()
 
@@ -46,8 +49,14 @@ def check_and_fetch_missing_years(state: Optional[str], crop: Optional[str],
     """
     Check for missing yield data in the requested year range and fetch/upsert missing data.
     """
-    if not start_year or not end_year:
-        return  # Can't check for missing years without a range
+    logger.info(f"Checking for missing yield data for state={state}, crop={crop}, years={start_year}-{end_year}")
+
+    # if not start_year or not end_year:
+    #     return  # Can't check for missing years without a range
+
+    # Get NASS API key
+    api_key = get_nass_api_key()
+    use_api = bool(api_key)
     
     with Session(engine) as session:
         # Get all unique (county, state, crop) combinations that match the filters
@@ -64,14 +73,12 @@ def check_and_fetch_missing_years(state: Optional[str], crop: Optional[str],
             counties = get_counties_for_state(state)
             for county in counties:
                 yield_df = fetch_and_transform_yield(
-                                api_key, county, state_name, fetch_start, fetch_end
+                                api_key, county, state, start_year=start_year, end_year=end_year
                             )
                 upsert_yield_to_db(yield_df, engine)
             return
         
-        # Get NASS API key
-        api_key = get_nass_api_key()
-        use_api = bool(api_key)
+        
         
         # For each combination, check which years are missing
         for county, state_name, crop_name in combinations:
@@ -130,7 +137,10 @@ def get_yields(
     end_year: Optional[int] = Query(None)
 ):
     # Check for missing data and fetch if needed
-    check_and_fetch_missing_years(state, crop, start_year, end_year)
+    logger.info("Received yield data request")
+    
+    # check_and_fetch_missing_years(state, crop, start_year, end_year)
+    ensure_data_for(state, start_year, end_year, engine)
     
     with Session(engine) as session:
         query = select(Yield)
