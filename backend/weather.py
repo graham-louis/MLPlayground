@@ -14,7 +14,9 @@ engine = create_engine(DATABASE_URL)
 def get_weather(
     state: Optional[str] = Query(None),
     county: Optional[str] = Query(None),
-    year: Optional[int] = Query(None)
+    year: Optional[int] = Query(None),
+    start_year: Optional[int] = Query(None),
+    end_year: Optional[int] = Query(None)
 ):
     with Session(engine) as session:
         query = select(Weather)
@@ -24,6 +26,10 @@ def get_weather(
             query = query.where(Weather.county == county)
         if year:
             query = query.where(Weather.year == year)
+        if start_year:
+            query = query.where(Weather.year >= start_year)
+        if end_year:
+            query = query.where(Weather.year <= end_year)
         results = session.execute(query).scalars().all()
         return [
             {

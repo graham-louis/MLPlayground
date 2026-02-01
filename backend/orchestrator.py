@@ -4,7 +4,7 @@ import pandas as pd
 from backend.checks import yield_exists, weather_exists, soil_exists
 from backend.ingest.runner import get_counties_for_state
 from backend.ingest.crop_nass import fetch_and_transform_yield
-from backend.ingest.climate_nldas import fetch_and_transform_weather
+from backend.ingest.climate_nldas import fetch_and_transform_weather, fetch_and_transform_weather_meteostat
 from backend.ingest.soil_ssurgo import fetch_and_transform_soil
 from backend.config import get_nass_api_key
 from backend.ingest.runner import upsert_yield_to_db, upsert_weather_to_db, upsert_soil_to_db
@@ -36,6 +36,7 @@ def ensure_data_for(state, start_year, end_year, engine):
             if not weather_exists(session, county, state, start_year, end_year):
                 logger.info(f"Fetching weather data for {county}, {state} ({start_year}-{end_year})")
                 wdf = fetch_and_transform_weather(county, state, start_year, end_year)
+                # wdf = fetch_and_transform_weather_meteostat(county, state, start_year, end_year)
                 # if error ""  - Error fetching Daymet data: " skip
                 if wdf == "":
                     continue

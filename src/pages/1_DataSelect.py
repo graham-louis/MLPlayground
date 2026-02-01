@@ -45,7 +45,7 @@ end_year = 2024
 default_crops = ["SOYBEANS", "CORN", "WHEAT", "COTTON", "PEANUTS"]
 try:
     # Try to fetch yield rows for the chosen state and extract unique crop names.
-    yield_rows_for_state = get_yield_data(state=state_name)
+    yield_rows_for_state = get_yield_data(state=state_name, start_year=start_year, end_year=end_year)
     if not yield_rows_for_state.empty and 'crop' in yield_rows_for_state.columns:
         # Normalize crop names to uppercase strings and sort them for display
         crops = sorted(
@@ -75,9 +75,9 @@ if st.button("Load data"):
     st.text(f"Getting data for {crop} in {state_name} ({start_year}-{end_year})")
 
     # Fetch from backend API
-    yield_data = get_yield_data(state=state_name, crop=crop)
+    yield_data = get_yield_data(state=state_name, crop=crop, start_year=start_year, end_year=end_year)
     soil_data_df = get_soil_data(state=state_name)
-    weather_data_df = get_weather_data(state=state_name)
+    weather_data_df = get_weather_data(state=state_name, start_year=start_year, end_year=end_year)
 
     # Data integrity/diagnostics section
     st.subheader("Data Diagnostics & Integrity Checks")
