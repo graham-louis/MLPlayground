@@ -4,11 +4,9 @@ WORKDIR /app/
 
 RUN pip install uv
 
-COPY pyproject.toml /app/
+COPY . /app/
 
 RUN uv pip install --system --no-cache-dir .
-
-COPY . /app/
 
 ENV PYTHONPATH=/app
 
