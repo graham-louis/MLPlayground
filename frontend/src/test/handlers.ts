@@ -48,6 +48,16 @@ export const defaultHandlers = [
   http.post("/api/v1/ingest/trigger", () =>
     HttpResponse.json({ message: "Data ingestion started in background." })
   ),
+  http.get("/api/v1/models/features", () =>
+    HttpResponse.json([
+      "avg_temp", "precipitation", "gdd", "vp", "srad",
+      "ph", "organic_matter", "sand_pct", "clay_pct",
+    ])
+  ),
+  // Default: training returns no data (individual tests override this)
+  http.post("/api/v1/models/train", () =>
+    HttpResponse.json({ detail: "No data" }, { status: 404 })
+  ),
 ]
 
 export const server = setupServer(...defaultHandlers)
