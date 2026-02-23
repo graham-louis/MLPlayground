@@ -51,6 +51,10 @@ logs/
 .DS_Store
 Thumbs.db
 
+# TypeScript build info files
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
 # Streamlit
 .streamlit/
 .streamlit/secrets.toml

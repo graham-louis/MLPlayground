@@ -1,48 +1,94 @@
 # MLPlayground
 
-A Streamlit-based AutoML playground for data ingestion, profiling, and quick model comparison using PyCaret.
+An extensible, researcher-friendly platform for agricultural machine learning — crop yield prediction powered by FastAPI, React, and PostgreSQL.
+
+## Architecture
+
+MLPlayground follows the [tiangolo full-stack FastAPI template](https://github.com/tiangolo/full-stack-fastapi-template) structure:
+
+- **Backend**: FastAPI + SQLModel + Alembic (PostgreSQL)
+- **Frontend**: React + Vite + TypeScript + Chakra UI + TanStack Router/Query
+- **Infrastructure**: Docker Compose (db, backend, frontend, adminer)
 
 ## Features
-- Upload and profile datasets
-- Compare machine learning models (classification/regression)
-- Integrate external data (USDA NASS, SSURGO, weather)
-- Persist and share data and models
-- Scalable architecture with database-backed storage
+- Historical crop yield data browser (USDA NASS)
+- Climate data integration (Daymet / NASA NLDAS)
+- Soil properties (SSURGO)
+- Background data ingestion pipeline (CSV fallback or live NASS API)
+- REST API with OpenAPI docs
 
 ## Quick Start
 
 ### Local (with Docker Compose)
 ```sh
-docker-compose up --build
+cp .env .env.local  # edit if needed
+docker compose up --build
 ```
-Visit [http://localhost:8501](http://localhost:8501) in your browser.
 
-### Database Migrations
-After first startup, run migrations inside the app container:
+| Service  | URL |
+|----------|-----|
+| Frontend | http://localhost |
+| Backend API | http://localhost:8000/api/v1 |
+| API Docs | http://localhost:8000/docs |
+| Adminer (DB) | http://localhost:8080 |
+
+### Local Development (without Docker)
 ```sh
-docker-compose exec app alembic upgrade head
+# Backend
+cd backend
+pip install -e .
+fastapi dev app/main.py
+
+# Frontend
+cd frontend
+npm install
+npm run dev
 ```
 
 ## Project Structure
 
 ```
 MLPlayground/
-├── db/
-│   ├── models.py
-│   ├── init_db.py
-│   ├── migrate.py
-│   └── migrations/
-│       ├── env.py
-│       ├── script.py.mako
-│       └── versions/
-├── src/
-│   ├── AutoML.py
-│   ├── pages/
-│   └── utils/
-├── requirements.txt
-├── Dockerfile
-├── compose.yaml
-└── ...
+├── backend/
+│   ├── app/
+│   │   ├── main.py              # FastAPI app entry point
+│   │   ├── models.py            # SQLModel models (Yield, Weather, Soil)
+│   │   ├── backend_pre_start.py # DB readiness check
+│   │   ├── core/
+│   │   │   ├── config.py        # Settings (pydantic-settings)
+│   │   │   └── db.py            # SQLAlchemy engine + session
+│   │   ├── api/
+│   │   │   ├── main.py          # API router aggregator
+│   │   │   └── routes/          # yields, weather, soil, ingest, utils
+│   │   ├── ingest/              # Data ingestion pipeline
+│   │   │   ├── runner.py        # Bulk ingestion entry point
+│   │   │   ├── crop_nass.py     # USDA NASS yield fetcher
+│   │   │   ├── climate_nldas.py # Daymet weather fetcher
+│   │   │   └── soil_ssurgo.py   # SSURGO soil fetcher
+│   │   └── alembic/             # Database migrations
+│   ├── scripts/
+│   │   └── prestart.sh          # DB wait + alembic upgrade head
+│   ├── Dockerfile
+│   └── pyproject.toml
+├── frontend/
+│   ├── src/
+│   │   ├── main.tsx
+│   │   ├── routeTree.gen.ts
+│   │   └── routes/
+│   │       ├── __root.tsx       # Root layout + nav
+│   │       ├── index.tsx        # Home / dashboard
+│   │       ├── explore.tsx      # Data explorer
+│   │       └── model.tsx        # Model training (placeholder)
+│   ├── Dockerfile
+│   ├── nginx.conf
+│   ├── package.json
+│   └── vite.config.ts
+├── db/                          # Legacy SQLAlchemy models (reference)
+├── src/                         # Legacy Streamlit frontend (reference)
+├── crop_yield_1980-2022.csv     # Default yield seed data
+├── compose.yml                  # Docker Compose (new)
+├── compose.yaml                 # Docker Compose (legacy, kept for reference)
+└── .env                         # Environment variables
 ```
 
 ## Database Directory (`db/`)
