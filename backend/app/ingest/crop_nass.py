@@ -1,62 +1,9 @@
 import logging
-import os
 
 import pandas as pd
 import requests
 
 logger = logging.getLogger(__name__)
-
-
-def fetch_and_transform_yield_csv_fallback(
-    county_name: str,
-    state_name: str,
-    start_year: int,
-    end_year: int,
-    csv_path: str | None = None,
-) -> pd.DataFrame:
-    """
-    Reads the bundled CSV for yield data and returns a cleaned DataFrame
-    in the same format as the live NASS API path.
-    """
-    logger.info("Reading local CSV for yield data (%s, %s %d-%d)…", county_name, state_name, start_year, end_year)
-    if csv_path is None:
-        csv_path = os.path.join(os.path.dirname(__file__), "../../crop_yield_1980-2022.csv")
-    df = pd.read_csv(csv_path)
-    mask = (
-        (df["State"].str.upper() == state_name.upper())
-        & (df["County"].str.upper() == county_name.upper())
-        & (df["Data Item"].str.contains("YIELD", case=False))
-        & (df["Year"] >= start_year)
-        & (df["Year"] <= end_year)
-    )
-    filtered = df[mask]
-    if filtered.empty:
-        logger.warning("No CSV yield data found for %s, %s %d-%d.", county_name, state_name, start_year, end_year)
-        return pd.DataFrame()
-    out = (
-        filtered[["Year", "Value", "Commodity", "Data Item", "Ag District", "County ANSI"]]
-        .rename(
-            columns={
-                "Value": "CropYield_bu_ac",
-                "Commodity": "Crop",
-                "Data Item": "DataItem",
-                "Ag District": "district",
-                "County ANSI": "county_ansi",
-            }
-        )
-        .copy()
-    )
-    out["CropYield_bu_ac"] = pd.to_numeric(out["CropYield_bu_ac"], errors="coerce")
-    out.dropna(subset=["CropYield_bu_ac"], inplace=True)
-    out["Year"] = out["Year"].astype(int)
-    out["County"] = county_name
-    out["State"] = state_name
-    if "county_ansi" in out.columns:
-        out["county_ansi"] = out["county_ansi"].astype(str).replace("nan", None)
-    if "district" in out.columns:
-        out["district"] = out["district"].astype(str).replace("nan", None)
-    logger.info("CSV yield data loaded: %d rows.", len(out))
-    return out
 
 
 def fetch_and_transform_yield(

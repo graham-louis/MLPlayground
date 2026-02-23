@@ -1,18 +1,42 @@
+"""
+Bulk ingestion runner for MLPlayground.
+
+Ingestion is driven entirely by the USDA NASS API — no local CSV files.
+The NASS_API_KEY setting must be set.
+
+The list of states to ingest is read from the INGEST_STATES environment
+variable (comma-separated, e.g. "North Carolina,Iowa,Illinois").
+If INGEST_STATES is not set, a default set of states is used.
+Year range defaults to 1980–2022 and can be overridden via
+INGEST_START_YEAR and INGEST_END_YEAR.
+"""
 import logging
 import os
-import re
 
-import pandas as pd
 import requests
 from sqlmodel import Session, select
 
+import pandas as pd
+from app.core.config import settings
 from app.core.db import engine
 from app.ingest.climate_nldas import _validate_name, fetch_and_transform_weather
-from app.ingest.crop_nass import fetch_and_transform_yield, fetch_and_transform_yield_csv_fallback
+from app.ingest.crop_nass import fetch_and_transform_yield
 from app.ingest.soil_ssurgo import fetch_and_transform_soil
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_STATES = [
+    "North Carolina",
+    "Iowa",
+    "Illinois",
+    "Indiana",
+    "Nebraska",
+    "Minnesota",
+    "Ohio",
+    "Missouri",
+    "South Dakota",
+    "Kansas",
+]
 
 
 def get_counties_for_state(state_name: str) -> list[str]:
@@ -34,10 +58,7 @@ def get_counties_for_state(state_name: str) -> list[str]:
 
 
 def upsert_soil_to_db(df: pd.DataFrame) -> None:
-    """
-    Upserts a single-row DataFrame of soil features into the soil table.
-    All work is done in a single session.
-    """
+    """Upserts soil features in a single session/transaction."""
     from app.models import Soil
 
     if df is None or df.empty:
@@ -61,9 +82,7 @@ def upsert_soil_to_db(df: pd.DataFrame) -> None:
 
 
 def upsert_weather_to_db(df: pd.DataFrame) -> None:
-    """
-    Upserts annual weather rows into the weather table in a single session/transaction.
-    """
+    """Upserts annual weather rows in a single session/transaction."""
     from app.models import Weather
 
     if df is None or df.empty:
@@ -92,9 +111,7 @@ def upsert_weather_to_db(df: pd.DataFrame) -> None:
 
 
 def upsert_yield_to_db(df: pd.DataFrame) -> None:
-    """
-    Upserts annual yield rows into the yield table in a single session/transaction.
-    """
+    """Upserts annual yield rows in a single session/transaction."""
     from app.models import Yield
 
     if df is None or df.empty:
@@ -131,73 +148,75 @@ def upsert_yield_to_db(df: pd.DataFrame) -> None:
 
 def main() -> None:
     """
-    Default CSV-driven bulk ingestion.
+    Bulk ingestion entry point.
 
-    Reads ``crop_yield_1980-2022.csv`` from the repo root and for each
-    County/State group ingests soil, weather, and yield data.
+    Iterates over every county in each configured state and fetches
+    soil (SSURGO), weather (Daymet), and yield (USDA NASS) data.
     Each county is processed independently — a failure for one county
     does not abort the rest.
+
+    Required environment / settings:
+        NASS_API_KEY   – USDA NASS QuickStats API key.
+
+    Optional environment variables:
+        INGEST_STATES      – Comma-separated state names (default: built-in list).
+        INGEST_START_YEAR  – First year to ingest (default: 1980).
+        INGEST_END_YEAR    – Last year to ingest (default: 2022).
+        DRY_RUN            – Set to any non-empty, non-"0" value to skip DB writes.
     """
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     api_key = settings.NASS_API_KEY
-    use_api = bool(api_key)
-    if not use_api:
-        logger.warning("NASS_API_KEY not set — falling back to CSV for yield data.")
-
-    csv_path = os.path.join(os.path.dirname(__file__), "../../../crop_yield_1980-2022.csv")
-    logger.info("Reading CSV: %s", csv_path)
-    try:
-        df = pd.read_csv(csv_path)
-    except Exception as exc:
-        logger.error("Failed to read CSV: %s", exc)
+    if not api_key:
+        logger.error(
+            "NASS_API_KEY is not set. Yield ingestion requires a valid USDA NASS API key. "
+            "Register for free at https://quickstats.nass.usda.gov/api."
+        )
         return
 
-    required = ["County", "State", "Year"]
-    for col in required:
-        if col not in df.columns:
-            logger.error("CSV missing required column: %s", col)
-            return
+    states_env = os.environ.get("INGEST_STATES", "")
+    states = [s.strip() for s in states_env.split(",") if s.strip()] if states_env else DEFAULT_STATES
+
+    start_year = int(os.environ.get("INGEST_START_YEAR", "1980"))
+    end_year = int(os.environ.get("INGEST_END_YEAR", "2022"))
 
     _dry_run_val = os.environ.get("DRY_RUN", "")
     dry_run = bool(_dry_run_val) and _dry_run_val != "0"
-    grouped = df.groupby(["County", "State"])
-    total = len(grouped)
-    for idx, ((county, state), group) in enumerate(grouped, 1):
-        county = str(county).strip()
-        state = str(state).strip()
-        years = group["Year"].dropna().astype(int)
-        if years.empty:
-            continue
-        start_y, end_y = int(years.min()), int(years.max())
-        logger.info("[%d/%d] Processing %s, %s (%d-%d)...", idx, total, county, state, start_y, end_y)
 
-        if dry_run:
-            logger.info("  DRY RUN — skipping fetch for %s, %s.", county, state)
+    logger.info("Starting bulk ingestion for %d state(s), years %d-%d.", len(states), start_year, end_year)
+
+    for state in states:
+        counties = get_counties_for_state(state)
+        if not counties:
+            logger.warning("No counties found for %s — skipping.", state)
             continue
 
-        # Per-county error isolation: log and continue on any failure
-        try:
-            soil_df = fetch_and_transform_soil(county, state)
-            upsert_soil_to_db(soil_df)
-        except Exception as exc:
-            logger.error("Soil ingestion failed for %s, %s: %s", county, state, exc)
+        total = len(counties)
+        for idx, county in enumerate(counties, 1):
+            logger.info("[%s %d/%d] Processing %s...", state, idx, total, county)
 
-        try:
-            weather_result = fetch_and_transform_weather(county, state, start_y, end_y)
-            weather_df = weather_result[0] if isinstance(weather_result, tuple) else weather_result
-            upsert_weather_to_db(weather_df)
-        except Exception as exc:
-            logger.error("Weather ingestion failed for %s, %s: %s", county, state, exc)
+            if dry_run:
+                logger.info("  DRY RUN — skipping fetch for %s, %s.", county, state)
+                continue
 
-        try:
-            if use_api:
-                yield_df = fetch_and_transform_yield(api_key, county, state, start_y, end_y)
-            else:
-                yield_df = fetch_and_transform_yield_csv_fallback(county, state, start_y, end_y)
-            upsert_yield_to_db(yield_df)
-        except Exception as exc:
-            logger.error("Yield ingestion failed for %s, %s: %s", county, state, exc)
+            try:
+                soil_df = fetch_and_transform_soil(county, state)
+                upsert_soil_to_db(soil_df)
+            except Exception as exc:
+                logger.error("Soil ingestion failed for %s, %s: %s", county, state, exc)
+
+            try:
+                weather_result = fetch_and_transform_weather(county, state, start_year, end_year)
+                weather_df = weather_result[0] if isinstance(weather_result, tuple) else weather_result
+                upsert_weather_to_db(weather_df)
+            except Exception as exc:
+                logger.error("Weather ingestion failed for %s, %s: %s", county, state, exc)
+
+            try:
+                yield_df = fetch_and_transform_yield(api_key, county, state, start_year, end_year)
+                upsert_yield_to_db(yield_df)
+            except Exception as exc:
+                logger.error("Yield ingestion failed for %s, %s: %s", county, state, exc)
 
     logger.info("Bulk ingestion complete.")
 

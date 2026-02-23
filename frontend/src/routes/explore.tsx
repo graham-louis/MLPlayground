@@ -200,9 +200,9 @@ function ExplorePage() {
                   <Box>
                     <AlertTitle>No data found</AlertTitle>
                     <AlertDescription>
-                      The database is empty. Run the ingestion pipeline to load
-                      crop yield data from the bundled CSV (and soil/weather
-                      from public APIs).
+                      The database is empty. Run the ingestion pipeline to
+                      fetch crop yield data from USDA NASS, climate data from
+                      Daymet, and soil properties from SSURGO.
                     </AlertDescription>
                   </Box>
                 </Alert>
