@@ -1,4 +1,8 @@
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
   Box,
   Button,
   Card,
@@ -21,7 +25,7 @@ import {
   Tr,
 } from "@chakra-ui/react"
 import { createFileRoute } from "@tanstack/react-router"
-import { useQuery } from "@tanstack/react-query"
+import { useMutation, useQuery } from "@tanstack/react-query"
 import axios from "axios"
 import { useState } from "react"
 
@@ -85,6 +89,11 @@ function ExplorePage() {
         .get("/api/v1/soil/", { params: queryParams })
         .then((r) => r.data),
     enabled: submitted && activeTab === "soil",
+  })
+
+  const ingestMutation = useMutation({
+    mutationFn: () =>
+      axios.post("/api/v1/ingest/trigger").then((r) => r.data as { message: string }),
   })
 
   const handleFetch = () => {
@@ -174,7 +183,45 @@ function ExplorePage() {
           </CardHeader>
           <CardBody overflowX="auto">
             {tableRows.length === 0 ? (
-              <Text color="gray.500">No data found. Try adjusting your filters or run the data ingestion pipeline first.</Text>
+              <Stack spacing={4}>
+                <Alert status="info" borderRadius="md">
+                  <AlertIcon />
+                  <Box>
+                    <AlertTitle>No data found</AlertTitle>
+                    <AlertDescription>
+                      The database is empty. Run the ingestion pipeline to load
+                      crop yield data from the bundled CSV (and soil/weather
+                      from public APIs).
+                    </AlertDescription>
+                  </Box>
+                </Alert>
+                <Button
+                  colorScheme="green"
+                  isLoading={ingestMutation.isPending}
+                  loadingText="Ingesting…"
+                  onClick={() => ingestMutation.mutate()}
+                  width="fit-content"
+                >
+                  Run Data Ingestion
+                </Button>
+                {ingestMutation.isSuccess && (
+                  <Alert status="success" borderRadius="md">
+                    <AlertIcon />
+                    <AlertDescription>
+                      {ingestMutation.data?.message} This may take several
+                      minutes. Click "Load Data" again once ingestion completes.
+                    </AlertDescription>
+                  </Alert>
+                )}
+                {ingestMutation.isError && (
+                  <Alert status="error" borderRadius="md">
+                    <AlertIcon />
+                    <AlertDescription>
+                      Ingestion failed to start. Check the backend logs.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </Stack>
             ) : (
               <Table size="sm" variant="striped">
                 <Thead>
