@@ -8,8 +8,8 @@ __pycache__/
 *$py.class
 
 # Virtualenvs / envs
-.env
 .env.*
+!.env
 .venv/
 venv/
 env/
@@ -32,6 +32,10 @@ dist/
 pip-wheel-metadata/
 .wheelhouse/
 
+# Node / frontend
+node_modules/
+frontend/dist/
+
 # Test / coverage
 .pytest_cache/
 .coverage
@@ -50,6 +54,10 @@ logs/
 # OS files
 .DS_Store
 Thumbs.db
+
+# TypeScript build info files
+tsconfig.tsbuildinfo
+*.tsbuildinfo
 
 # Streamlit
 .streamlit/
