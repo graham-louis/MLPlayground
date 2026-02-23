@@ -91,9 +91,20 @@ function ExplorePage() {
     enabled: submitted && activeTab === "soil",
   })
 
+  const { data: ingestStatus, refetch: refetchStatus } = useQuery({
+    queryKey: ["ingest-status"],
+    queryFn: () =>
+      axios
+        .get("/api/v1/ingest/status")
+        .then((r) => r.data as { status: "idle" | "running" }),
+    refetchInterval: (query) =>
+      query.state.data?.status === "running" ? 3000 : false,
+  })
+
   const ingestMutation = useMutation({
     mutationFn: () =>
       axios.post("/api/v1/ingest/trigger").then((r) => r.data as { message: string }),
+    onSuccess: () => refetchStatus(),
   })
 
   const handleFetch = () => {
@@ -195,29 +206,31 @@ function ExplorePage() {
                     </AlertDescription>
                   </Box>
                 </Alert>
-                <Button
-                  colorScheme="green"
-                  isLoading={ingestMutation.isPending}
-                  loadingText="Ingesting…"
-                  onClick={() => ingestMutation.mutate()}
-                  width="fit-content"
-                >
-                  Run Data Ingestion
-                </Button>
-                {ingestMutation.isSuccess && (
-                  <Alert status="success" borderRadius="md">
+                {ingestStatus?.status === "running" ? (
+                  <Alert status="loading" borderRadius="md">
                     <AlertIcon />
                     <AlertDescription>
-                      {ingestMutation.data?.message} This may take several
-                      minutes. Click "Load Data" again once ingestion completes.
+                      Ingestion is running… click "Load Data" again once it
+                      completes (this page polls for status automatically).
                     </AlertDescription>
                   </Alert>
+                ) : (
+                  <Button
+                    colorScheme="green"
+                    isLoading={ingestMutation.isPending}
+                    loadingText="Starting…"
+                    onClick={() => ingestMutation.mutate()}
+                    width="fit-content"
+                  >
+                    Run Data Ingestion
+                  </Button>
                 )}
                 {ingestMutation.isError && (
                   <Alert status="error" borderRadius="md">
                     <AlertIcon />
                     <AlertDescription>
-                      Ingestion failed to start. Check the backend logs.
+                      {(ingestMutation.error as { response?: { data?: { detail?: string } } })?.response?.data
+                        ?.detail ?? "Ingestion failed to start. Check the backend logs."}
                     </AlertDescription>
                   </Alert>
                 )}
