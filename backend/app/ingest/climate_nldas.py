@@ -4,6 +4,11 @@ import re
 import daymetpy
 import pandas as pd
 import requests
+from sqlalchemy import delete as sa_delete
+from sqlmodel import Session
+
+from app.core.db import engine
+from app.models import DailyWeather
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +71,84 @@ def get_county_center_coord(county_name: str, state_name: str) -> dict | None:
     center = {"lat": (min_lat + max_lat) / 2, "lon": (min_lon + max_lon) / 2}
     logger.debug("Center for %s: lat=%.4f lon=%.4f", county_name, center["lat"], center["lon"])
     return center
+
+
+def _fill_leap_days(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Daymet provides exactly 365 rows per year, omitting Dec 31 in leap years.
+    Inserts a synthetic day 366 row (copy of day 365, precipitation = 0) so
+    every year has a complete consecutive date sequence, which ApsimX requires.
+    """
+    filled: list[pd.DataFrame] = []
+    for year, grp in df.groupby("Year"):
+        is_leap = (year % 4 == 0) and ((year % 100 != 0) or (year % 400 == 0))
+        if is_leap and int(grp["DayOfYear"].max()) == 365:
+            dec31 = grp[grp["DayOfYear"] == 365].copy()
+            dec31["DayOfYear"] = 366
+            dec31["date"] = f"{year}-12-31"
+            dec31["prcp"] = 0.0
+            filled.append(grp)
+            filled.append(dec31)
+        else:
+            filled.append(grp)
+    return pd.concat(filled, ignore_index=True).sort_values(["County", "Year", "DayOfYear"])
+
+
+def save_daily_weather_to_db(daily_df: pd.DataFrame, state: str) -> int:
+    """
+    Persist a Daymet daily DataFrame (as returned by ``fetch_and_transform_weather``)
+    into the ``daily_weather`` table.
+
+    For each county the existing rows in the covered year range are deleted then
+    bulk-inserted, which is much faster than row-by-row upsert.
+
+    Args:
+        daily_df: DataFrame with columns Year, DayOfYear, date, County,
+                  tmax, tmin, prcp, srad, vp, dayl.
+        state:    State name to store alongside each row (e.g. "North Carolina").
+
+    Returns:
+        Total number of rows written to the DB.
+    """
+    df = _fill_leap_days(daily_df)
+    counties = df["County"].unique()
+    years = sorted(df["Year"].unique())
+    year_min, year_max = int(years[0]), int(years[-1])
+    count = 0
+
+    with Session(engine) as session:
+        for county in counties:
+            session.exec(  # type: ignore[call-overload]
+                sa_delete(DailyWeather).where(
+                    DailyWeather.county == county,
+                    DailyWeather.state == state,
+                    DailyWeather.year >= year_min,
+                    DailyWeather.year <= year_max,
+                )
+            )
+            county_df = df[df["County"] == county]
+            objects = [
+                DailyWeather(
+                    county=county,
+                    state=state,
+                    year=int(r["Year"]),
+                    day_of_year=int(r["DayOfYear"]),
+                    date=str(r["date"].date() if hasattr(r["date"], "date") else r["date"]),
+                    tmax=float(r["tmax"]) if pd.notna(r.get("tmax")) else None,
+                    tmin=float(r["tmin"]) if pd.notna(r.get("tmin")) else None,
+                    prcp=float(r["prcp"]) if pd.notna(r.get("prcp")) else None,
+                    srad=float(r["srad"]) if pd.notna(r.get("srad")) else None,
+                    vp=float(r["vp"]) if pd.notna(r.get("vp")) else None,
+                    dayl=float(r["dayl"]) if pd.notna(r.get("dayl")) else None,
+                )
+                for _, r in county_df.iterrows()
+            ]
+            session.add_all(objects)
+            count += len(objects)
+        session.commit()
+
+    logger.info("Saved %d daily weather rows to DB for state=%s.", count, state)
+    return count
 
 
 def fetch_and_transform_weather(

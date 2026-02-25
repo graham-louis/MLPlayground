@@ -177,6 +177,74 @@ That's it. The training form, results display, and feature importance chart will
 
 ---
 
+## Adding a Process-Based Simulator (e.g. ApsimX, DSSAT)
+
+Process-based simulators are **not** scikit-learn models — they run as external programs and consume weather/soil files. The pattern used by ApsimX is the "subprocess adapter" and lives in `backend/app/ingest/apsimx_runner.py`. Use it as your template.
+
+### How the ApsimX adapter works
+
+```
+DB (DailyWeather + Soil tables)
+       ↓
+apsimx_runner.py
+  1. Query DailyWeather → generate .met weather file
+  2. Query Soil → patch soil properties in .apsimx template JSON
+  3. Patch Clock dates and crop sowing parameters
+  4. subprocess.run([APSIMX_BIN, "run", "simulation.apsimx"])
+  5. Read output SQLite .db → yield DataFrame
+       ↓
+models.py route → compare to observed USDA NASS yields → return R²/RMSE
+```
+
+### Prerequisites before running ApsimX
+
+1. **Build the binary** (one-time, ~60 seconds):
+   ```bash
+   bash scripts/install_apsimx.sh
+   ```
+2. **Set the environment variable** in `.env`:
+   ```
+   APSIMX_BIN=/tmp/apsim_bin/apsim
+   ```
+3. **Load daily weather into the database** (one-time per dataset):
+   ```bash
+   # Inside the running container:
+   docker compose exec backend python -m app.ingest.climate_daily
+   # Or via the API:
+   curl -X POST http://localhost:8000/api/v1/ingest/trigger-daily-weather
+   ```
+
+### Adding a new simulator (e.g. DSSAT)
+
+Follow the same pattern as `apsimx_runner.py`:
+
+| Step | What to do |
+|---|---|
+| 1 | Create `backend/app/ingest/dssat_runner.py` |
+| 2 | Write a `generate_weather_file_from_db()` function that converts DailyWeather rows to your simulator's format |
+| 3 | Write a `build_input_file()` function that patches the simulator's config template |
+| 4 | Write a `run_simulator()` function using `subprocess.run()` |
+| 5 | Write a `simulate_yields()` public entry point (matching the ApsimX signature) |
+| 6 | Add a `"dssat"` entry to `MODEL_TYPES`, `model_map` branch, and `_run_apsimx_model`-equivalent in `models.py` |
+| 7 | Add `"dssat"` to `MODEL_OPTIONS` in `frontend/src/routes/model.tsx` |
+
+**Key differences from a scikit-learn model:**
+- No `fit()` / `predict()` — the simulator runs as a subprocess
+- No train/test split — R² and RMSE compare simulation output vs observed data
+- Feature importances are replaced by simulation summary statistics
+- Data must be in the DB *before* running (trigger daily weather ingest first)
+
+### Data source requirements
+
+| Simulator input | MLPlayground source | Table / endpoint |
+|---|---|---|
+| Daily weather (.met, .wth, etc.) | Daymet via NLDAS | `daily_weather` table |
+| Soil physical properties | SSURGO via NRCS | `soil` table |
+| Crop management rules | Hard-coded per crop in `CROP_CONFIG` dict | `apsimx_runner.py` |
+| Observed yields (for validation) | USDA NASS QuickStats | `yields` table |
+
+---
+
 ## Difficulty Assessment (Researcher Perspective)
 
 | Task | Difficulty | Notes |

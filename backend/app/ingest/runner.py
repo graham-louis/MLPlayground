@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 import pandas as pd
 from app.core.config import settings
 from app.core.db import engine
-from app.ingest.climate_nldas import _validate_name, fetch_and_transform_weather
+from app.ingest.climate_nldas import _validate_name, fetch_and_transform_weather, save_daily_weather_to_db
 from app.ingest.crop_nass import fetch_and_transform_yield
 from app.ingest.soil_ssurgo import fetch_and_transform_soil
 
@@ -207,8 +207,10 @@ def main() -> None:
 
             try:
                 weather_result = fetch_and_transform_weather(county, state, start_year, end_year)
-                weather_df = weather_result[0] if isinstance(weather_result, tuple) else weather_result
+                weather_df, daily_df = weather_result if isinstance(weather_result, tuple) else (weather_result, None)
                 upsert_weather_to_db(weather_df)
+                if daily_df is not None and not daily_df.empty:
+                    save_daily_weather_to_db(daily_df, state)
             except Exception as exc:
                 logger.error("Weather ingestion failed for %s, %s: %s", county, state, exc)
 

@@ -57,6 +57,11 @@ services:
       - .env
     environment:
       - POSTGRES_SERVER=db
+      - APSIMX_BIN=/app/apsim/apsim
+      - DATA_DIR=/app/data
+    volumes:
+      - ./data:/app/data:ro
+      - /tmp/apsim_linux:/app/apsim:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/utils/health-check/"]
       interval: 10s

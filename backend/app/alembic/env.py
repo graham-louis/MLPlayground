@@ -5,7 +5,7 @@ from alembic import context
 from sqlmodel import SQLModel
 
 from app.core.config import settings
-from app.models import Yield, Weather, Soil  # noqa: F401 - needed to register models
+from app.models import Yield, Weather, Soil, DailyWeather  # noqa: F401 - needed to register models
 
 config = context.config
 config.set_main_option("sqlalchemy.url", str(settings.SQLALCHEMY_DATABASE_URI))

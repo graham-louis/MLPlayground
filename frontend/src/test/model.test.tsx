@@ -40,12 +40,23 @@ const TRAIN_RESULT = {
   end_year: 2022,
 }
 
-// Register the training endpoint with mock handlers
+const PREDICT_RESULT = {
+  predicted_yield: 152.3,
+  model_type: "random_forest",
+  training_r2: 0.78,
+  training_rmse: 8.5,
+  units: "bu/acre",
+}
+
 function setupTrainHandler() {
   server.use(
-    http.post("/api/v1/models/train", () =>
-      HttpResponse.json(TRAIN_RESULT)
-    )
+    http.post("/api/v1/models/train", () => HttpResponse.json(TRAIN_RESULT))
+  )
+}
+
+function setupPredictHandler() {
+  server.use(
+    http.post("/api/v1/models/predict", () => HttpResponse.json(PREDICT_RESULT))
   )
 }
 
@@ -55,7 +66,13 @@ describe("Model Training page – static content", () => {
     expect(screen.getByRole("heading", { name: /model training/i })).toBeInTheDocument()
   })
 
-  it("renders the Configure Your Model card", () => {
+  it("renders Train & Evaluate and Predict Yield tabs", () => {
+    renderWithProviders(<ModelPage />)
+    expect(screen.getByRole("tab", { name: /train/i })).toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: /predict yield/i })).toBeInTheDocument()
+  })
+
+  it("renders the Configure Your Model card in the Train tab", () => {
     renderWithProviders(<ModelPage />)
     expect(screen.getByRole("heading", { name: /configure your model/i })).toBeInTheDocument()
   })
@@ -90,6 +107,11 @@ describe("Model Training page – static content", () => {
     renderWithProviders(<ModelPage />)
     expect(screen.getByText(/select a crop above to enable training/i)).toBeInTheDocument()
   })
+
+  it("MODEL_OPTIONS includes LSTM", () => {
+    renderWithProviders(<ModelPage />)
+    expect(screen.getByRole("option", { name: /lstm/i })).toBeInTheDocument()
+  })
 })
 
 describe("Model Training page – crop population", () => {
@@ -103,11 +125,7 @@ describe("Model Training page – crop population", () => {
   it("enables Train Model button after selecting a crop", async () => {
     const user = userEvent.setup()
     renderWithProviders(<ModelPage />)
-
-    await waitFor(() => {
-      expect(screen.getByRole("option", { name: "CORN" })).toBeInTheDocument()
-    })
-
+    await waitFor(() => expect(screen.getByRole("option", { name: "CORN" })).toBeInTheDocument())
     await user.selectOptions(screen.getByLabelText(/crop/i), "CORN")
     expect(screen.getByRole("button", { name: /train model/i })).not.toBeDisabled()
   })
@@ -123,17 +141,10 @@ describe("Model Training page – training and results", () => {
     )
     const user = userEvent.setup()
     renderWithProviders(<ModelPage />)
-
     await waitFor(() => expect(screen.getByRole("option", { name: "CORN" })).toBeInTheDocument())
     await user.selectOptions(screen.getByLabelText(/crop/i), "CORN")
     await user.click(screen.getByRole("button", { name: /train model/i }))
-
-    // The button shows its loadingText while the mutation is in flight
-    await waitFor(() => {
-      expect(screen.getByText(/training model/i)).toBeInTheDocument()
-    })
-
-    // Eventually results appear
+    await waitFor(() => expect(screen.getByText(/training model/i)).toBeInTheDocument())
     await waitFor(() => expect(screen.getByText("R² Score")).toBeInTheDocument(), { timeout: 3000 })
   })
 
@@ -141,30 +152,23 @@ describe("Model Training page – training and results", () => {
     setupTrainHandler()
     const user = userEvent.setup()
     renderWithProviders(<ModelPage />)
-
     await waitFor(() => expect(screen.getByRole("option", { name: "CORN" })).toBeInTheDocument())
     await user.selectOptions(screen.getByLabelText(/crop/i), "CORN")
     await user.click(screen.getByRole("button", { name: /train model/i }))
-
-    await waitFor(() => {
-      expect(screen.getByText("R² Score")).toBeInTheDocument()
-    })
-    // R² 78% = 0.78 * 100
+    await waitFor(() => expect(screen.getByText("R² Score")).toBeInTheDocument())
     expect(screen.getByText("78.0%")).toBeInTheDocument()
     expect(screen.getByText("8.50")).toBeInTheDocument()
-    expect(screen.getByText("96")).toBeInTheDocument()  // n_train
-    expect(screen.getByText("24")).toBeInTheDocument()  // n_test
+    expect(screen.getByText("96")).toBeInTheDocument()
+    expect(screen.getByText("24")).toBeInTheDocument()
   })
 
   it("shows feature importance section with feature labels", async () => {
     setupTrainHandler()
     const user = userEvent.setup()
     renderWithProviders(<ModelPage />)
-
     await waitFor(() => expect(screen.getByRole("option", { name: "CORN" })).toBeInTheDocument())
     await user.selectOptions(screen.getByLabelText(/crop/i), "CORN")
     await user.click(screen.getByRole("button", { name: /train model/i }))
-
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: /feature importances/i })).toBeInTheDocument()
     })
@@ -174,16 +178,10 @@ describe("Model Training page – training and results", () => {
     setupTrainHandler()
     const user = userEvent.setup()
     renderWithProviders(<ModelPage />)
-
     await waitFor(() => expect(screen.getByRole("option", { name: "CORN" })).toBeInTheDocument())
     await user.selectOptions(screen.getByLabelText(/crop/i), "CORN")
     await user.click(screen.getByRole("button", { name: /train model/i }))
-
-    // Wait for the unique badge that only appears after training completes
-    await waitFor(() => {
-      expect(screen.getByText(/CORN · North Carolina/)).toBeInTheDocument()
-    })
-    // "Random Forest" badge is present (distinct from the select option)
+    await waitFor(() => expect(screen.getByText(/CORN · North Carolina/)).toBeInTheDocument())
     const allRF = screen.getAllByText("Random Forest")
     expect(allRF.length).toBeGreaterThanOrEqual(1)
   })
@@ -199,13 +197,36 @@ describe("Model Training page – training and results", () => {
     )
     const user = userEvent.setup()
     renderWithProviders(<ModelPage />)
-
     await waitFor(() => expect(screen.getByRole("option", { name: "CORN" })).toBeInTheDocument())
     await user.selectOptions(screen.getByLabelText(/crop/i), "CORN")
     await user.click(screen.getByRole("button", { name: /train model/i }))
+    await waitFor(() => expect(screen.getByText(/No yield data found/i)).toBeInTheDocument())
+  })
+})
 
+describe("Model Training page – Predict Yield tab", () => {
+  it("switches to Predict Yield tab and shows form", async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<ModelPage />)
+    await user.click(screen.getByRole("tab", { name: /predict yield/i }))
     await waitFor(() => {
-      expect(screen.getByText(/No yield data found/i)).toBeInTheDocument()
+      expect(screen.getByRole("heading", { name: /training scope/i })).toBeInTheDocument()
     })
+    expect(screen.getByRole("button", { name: /predict yield/i })).toBeInTheDocument()
+  })
+
+  it("shows predicted yield after submitting Predict tab", async () => {
+    setupPredictHandler()
+    const user = userEvent.setup()
+    renderWithProviders(<ModelPage />)
+    await user.click(screen.getByRole("tab", { name: /predict yield/i }))
+    await waitFor(() => expect(screen.getAllByRole("option", { name: "CORN" }).length).toBeGreaterThan(0))
+    const cropSelects = screen.getAllByLabelText(/crop/i)
+    await user.selectOptions(cropSelects[cropSelects.length - 1], "CORN")
+    await user.click(screen.getByRole("button", { name: /predict yield/i }))
+    await waitFor(() => {
+      expect(screen.getByText("Prediction Result")).toBeInTheDocument()
+    })
+    expect(screen.getByText("152.3")).toBeInTheDocument()
   })
 })

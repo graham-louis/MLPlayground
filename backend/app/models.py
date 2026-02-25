@@ -78,6 +78,30 @@ class SoilsPublic(SQLModel):
     count: int
 
 
+# --- Daily Weather Models ---
+class DailyWeatherBase(SQLModel):
+    year: int
+    day_of_year: int
+    date: str           # ISO date string, e.g. "1980-01-01"
+    state: str
+    county: str
+    tmax: Optional[float] = None    # °C
+    tmin: Optional[float] = None    # °C
+    prcp: Optional[float] = None    # mm
+    srad: Optional[float] = None    # W/m²
+    vp: Optional[float] = None      # Pa
+    dayl: Optional[float] = None    # seconds of daylight
+
+
+class DailyWeather(DailyWeatherBase, table=True):
+    __tablename__ = "daily_weather"
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+
+class DailyWeatherPublic(DailyWeatherBase):
+    id: int
+
+
 # Generic message
 class Message(SQLModel):
     message: str
