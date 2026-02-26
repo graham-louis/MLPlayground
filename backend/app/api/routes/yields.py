@@ -2,7 +2,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select, and_
 from app.core.db import get_session
-from app.models import Yield, YieldPublic, YieldsPublic
+from app.db_models import Yield, YieldPublic, YieldsPublic
 
 router = APIRouter(prefix="/yields", tags=["yields"])
 

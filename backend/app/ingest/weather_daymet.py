@@ -8,7 +8,7 @@ from sqlalchemy import delete as sa_delete
 from sqlmodel import Session
 
 from app.core.db import engine
-from app.models import DailyWeather
+from app.db_models import DailyWeather
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ def _fill_leap_days(df: pd.DataFrame) -> pd.DataFrame:
     """
     Daymet provides exactly 365 rows per year, omitting Dec 31 in leap years.
     Inserts a synthetic day 366 row (copy of day 365, precipitation = 0) so
-    every year has a complete consecutive date sequence, which ApsimX requires.
+    every year has a complete consecutive date sequence.
     """
     filled: list[pd.DataFrame] = []
     for year, grp in df.groupby("Year"):

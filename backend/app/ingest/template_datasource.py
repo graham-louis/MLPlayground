@@ -189,7 +189,7 @@ def fetch_and_transform(
 #
 # After you have the function above returning real data, do the following:
 #
-# STEP 1 — Add a database model  (backend/app/models.py)
+# STEP 1 — Add a database model  (backend/app/db_models.py)
 # -------------------------------------------------------
 # Add a SQLModel class for your table.  Copy the Weather block as a template:
 #
@@ -221,30 +221,68 @@ def fetch_and_transform(
 # That's it — the table will be created automatically.
 #
 #
-# STEP 3 — Register your ingest script in the runner  (runner.py — 3 lines)
-# --------------------------------------------------------------------------
-# Open backend/app/ingest/runner.py and add these lines where the other
-# sources are imported and called:
+# STEP 3 — Write an upsert function and register with the datasource registry
+# ---------------------------------------------------------------------------
+# Add an upsert function in backend/app/ingest/runner.py (copy upsert_soil_to_db
+# as a template):
 #
-#   # At the top of the file, add:
-#   from app.ingest.my_new_file import fetch_and_transform as fetch_my_datasource
+#   def upsert_my_datasource_to_db(df: pd.DataFrame) -> None:
+#       from app.db_models import MyDataSource
+#       if df is None or df.empty:
+#           return
+#       with Session(engine) as session:
+#           for _, row in df.iterrows():
+#               obj = session.exec(
+#                   select(MyDataSource).where(
+#                       MyDataSource.year == int(row["year"]),
+#                       MyDataSource.county == row["county"],
+#                       MyDataSource.state == row["state"],
+#                   )
+#               ).first()
+#               if obj is None:
+#                   obj = MyDataSource(year=int(row["year"]), county=row["county"], state=row["state"])
+#               obj.my_metric = row.get("my_metric")
+#               session.add(obj)
+#           session.commit()
 #
-#   # In the main() loop, add after the yield block:
-#   try:
-#       my_df = fetch_my_datasource(county, state, start_year, end_year)
-#       # upsert_my_datasource_to_db(my_df)  ← add this upsert function in runner.py too
-#   except Exception as exc:
-#       logger.error("MyDataSource ingestion failed for %s, %s: %s", county, state, exc)
+# Then register with the datasource registry by adding the following at the
+# bottom of THIS file (my_source.py), passing BOTH fetch_fn and upsert_fn:
+#
+#   from app.ingest.registry import DATASOURCE_REGISTRY
+#   from app.ingest.runner import upsert_my_datasource_to_db
+#
+#   DATASOURCE_REGISTRY.register(
+#       key=DATASOURCE_NAME,
+#       label="My Data Source",
+#       endpoint="/api/v1/my_datasource/",
+#       columns=DATASOURCE_COLUMNS,
+#       scope_params=[
+#           {"name": "states",     "type": "string_list", "label": "States", "default": ["North Carolina"]},
+#           {"name": "start_year", "type": "integer",     "label": "Start Year", "default": 1980},
+#           {"name": "end_year",   "type": "integer",     "label": "End Year",   "default": 2022},
+#       ],
+#       fetch_fn=fetch_and_transform,
+#       upsert_fn=upsert_my_datasource_to_db,   # ← REQUIRED for ingest to persist data
+#       description=DATASOURCE_DESCRIPTION,
+#   )
+#
+# The ingest pipeline calls fetch_fn to get the DataFrame, then upsert_fn to
+# save it.  If upsert_fn is missing, the data will be fetched but NOT saved.
 #
 #
 # STEP 4 — Add an API route  (backend/app/api/routes/ — copy weather.py)
 # -----------------------------------------------------------------------
 # Copy backend/app/api/routes/weather.py to my_datasource.py.
 # Replace "Weather" with your model class name and adjust the query filters.
-# Then open backend/app/api/main.py and add one line:
+# Then open backend/app/api/main.py and add TWO lines:
 #
 #   from app.api.routes import my_datasource
+#   import app.ingest.my_datasource          # noqa: F401 — registers datasource at startup
 #   api_router.include_router(my_datasource.router)
+#
+# The second import is REQUIRED so the DATASOURCE_REGISTRY.register() call
+# runs when the app boots — without it the datasource won't appear in the
+# Data Explorer or Ingest form even though the API route works fine.
 #
 # After that your new data source will automatically appear in the API docs
 # at http://localhost:8000/docs and can be queried from the Data Explorer.

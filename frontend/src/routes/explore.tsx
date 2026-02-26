@@ -15,6 +15,12 @@ import {
   FormLabel,
   Heading,
   Input,
+  Modal,
+  ModalBody,
+  ModalCloseButton,
+  ModalContent,
+  ModalHeader,
+  ModalOverlay,
   Select,
   SimpleGrid,
   Spinner,
@@ -34,18 +40,22 @@ import {
   Text,
   Th,
   Thead,
+  Tooltip,
   Tr,
+  useDisclosure,
 } from "@chakra-ui/react"
 import { createFileRoute } from "@tanstack/react-router"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import axios from "axios"
 import { useState } from "react"
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Line,
   LineChart,
   ResponsiveContainer,
-  Tooltip,
+  Tooltip as RechartTooltip,
   XAxis,
   YAxis,
 } from "recharts"
@@ -53,6 +63,19 @@ import {
 export const Route = createFileRoute("/explore")({
   component: ExplorePage,
 })
+
+// ── Types ──────────────────────────────────────────────────────────────────
+
+interface DatasourceInfo {
+  key: string
+  label: string
+  endpoint: string
+  columns: string[]
+  scope_params: { name: string; type: string; label: string; default?: unknown }[]
+  description: string
+}
+
+// ── Constants ──────────────────────────────────────────────────────────────
 
 const US_STATES = [
   "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado",
@@ -67,16 +90,9 @@ const US_STATES = [
   "West Virginia", "Wisconsin", "Wyoming",
 ]
 
-type DataTab = "yields" | "weather" | "soil" | "daily_weather"
+// ── Stats helpers ──────────────────────────────────────────────────────────
 
-const DATA_TABS: { key: DataTab; label: string; endpoint: string }[] = [
-  { key: "yields",        label: "Yields",        endpoint: "/api/v1/yields/" },
-  { key: "weather",       label: "Weather",       endpoint: "/api/v1/weather/" },
-  { key: "soil",          label: "Soil",          endpoint: "/api/v1/soil/" },
-  { key: "daily_weather", label: "Daily Weather", endpoint: "/api/v1/daily-weather/" },
-]
-
-function computeStats(rows: Record<string, unknown>[], col: string): { mean: number; min: number; max: number } | null {
+function computeStats(rows: Record<string, unknown>[], col: string) {
   const vals = rows.map((r) => Number(r[col])).filter((v) => !isNaN(v))
   if (vals.length === 0) return null
   return {
@@ -105,17 +121,102 @@ function SummaryStats({ rows, numericCols }: { rows: Record<string, unknown>[]; 
   )
 }
 
-function TimeSeriesChart({ rows, tab }: { rows: Record<string, unknown>[]; tab: DataTab }) {
+// ── Column histogram modal ─────────────────────────────────────────────────
+
+function ColumnHistogram({
+  isOpen,
+  onClose,
+  col,
+  rows,
+}: {
+  isOpen: boolean
+  onClose: () => void
+  col: string
+  rows: Record<string, unknown>[]
+}) {
+  const vals = rows.map((r) => Number(r[col])).filter((v) => !isNaN(v))
+  if (vals.length === 0) return null
+
+  const hasYear = col === "year"
+  let chartData: { label: string | number; value: number }[]
+
+  if (hasYear) {
+    const byYear: Record<number, number[]> = {}
+    for (const r of rows) {
+      const yr = Number(r["year"])
+      const v = Number(r[col])
+      if (!isNaN(yr) && !isNaN(v) && col !== "year") {
+        byYear[yr] = [...(byYear[yr] ?? []), v]
+      }
+    }
+    // For "year" column itself, just count occurrences
+    const freq: Record<number, number> = {}
+    for (const v of vals) freq[v] = (freq[v] ?? 0) + 1
+    chartData = Object.entries(freq)
+      .map(([k, v]) => ({ label: Number(k), value: v }))
+      .sort((a, b) => Number(a.label) - Number(b.label))
+  } else {
+    // Histogram: 20 bins
+    const min = Math.min(...vals)
+    const max = Math.max(...vals)
+    const bins = 20
+    const binSize = (max - min) / bins || 1
+    const counts = Array(bins).fill(0)
+    for (const v of vals) {
+      const idx = Math.min(Math.floor((v - min) / binSize), bins - 1)
+      counts[idx]++
+    }
+    chartData = counts.map((count, i) => ({
+      label: (min + i * binSize).toFixed(1),
+      value: count,
+    }))
+  }
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} size="xl">
+      <ModalOverlay />
+      <ModalContent>
+        <ModalHeader>
+          Distribution: <code>{col}</code>
+          <Text as="span" fontSize="sm" color="gray.500" fontWeight="normal" ml={2}>
+            ({vals.length} values)
+          </Text>
+        </ModalHeader>
+        <ModalCloseButton />
+        <ModalBody pb={6}>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 24 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} angle={-45} textAnchor="end" />
+              <YAxis tick={{ fontSize: 11 }} />
+              <RechartTooltip />
+              <Bar dataKey="value" fill="#276749" />
+            </BarChart>
+          </ResponsiveContainer>
+        </ModalBody>
+      </ModalContent>
+    </Modal>
+  )
+}
+
+// ── Time series chart ──────────────────────────────────────────────────────
+
+function TimeSeriesChart({
+  rows,
+  tab,
+}: {
+  rows: Record<string, unknown>[]
+  tab: DatasourceInfo
+}) {
   const yearCol = "year"
   if (!rows[0]?.[yearCol]) return null
 
-  const valueCol = tab === "yields" ? "value"
-    : tab === "weather" ? "avg_temp"
-    : tab === "daily_weather" ? "tmax"
+  const valueCol = tab.key === "yields" ? "value"
+    : tab.key === "weather" ? "avg_temp"
+    : tab.key === "daily_weather" ? "tmax"
     : null
-  if (!valueCol) return null
+  if (!valueCol || !rows[0]?.[valueCol]) return null
 
-  // Group by year, average the value column
   const byYear: Record<number, number[]> = {}
   for (const r of rows) {
     const yr = Number(r[yearCol])
@@ -125,16 +226,13 @@ function TimeSeriesChart({ rows, tab }: { rows: Record<string, unknown>[]; tab: 
     }
   }
   const chartData = Object.entries(byYear)
-    .map(([yr, vals]) => ({
-      year: Number(yr),
-      value: vals.reduce((a, b) => a + b, 0) / vals.length,
-    }))
+    .map(([yr, vs]) => ({ year: Number(yr), value: vs.reduce((a, b) => a + b, 0) / vs.length }))
     .sort((a, b) => a.year - b.year)
 
   if (chartData.length < 2) return null
 
-  const label = tab === "yields" ? "Avg Yield (bu/acre)"
-    : tab === "weather" ? "Avg Temp (°C)"
+  const label = tab.key === "yields" ? "Avg Yield (bu/acre)"
+    : tab.key === "weather" ? "Avg Temp (°C)"
     : "Avg Tmax (°C)"
 
   return (
@@ -145,13 +243,15 @@ function TimeSeriesChart({ rows, tab }: { rows: Record<string, unknown>[]; tab: 
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="year" tick={{ fontSize: 11 }} />
           <YAxis tick={{ fontSize: 11 }} width={55} />
-          <Tooltip formatter={(v: number) => v.toFixed(1)} />
+          <RechartTooltip formatter={(v: number) => v.toFixed(1)} />
           <Line type="monotone" dataKey="value" stroke="#276749" dot={false} strokeWidth={2} />
         </LineChart>
       </ResponsiveContainer>
     </Box>
   )
 }
+
+// ── Main page ──────────────────────────────────────────────────────────────
 
 function ExplorePage() {
   const [state, setState] = useState("North Carolina")
@@ -162,8 +262,18 @@ function ExplorePage() {
   const [activeTabIdx, setActiveTabIdx] = useState(0)
   const [queryParams, setQueryParams] = useState<Record<string, string>>({})
   const [submitted, setSubmitted] = useState(false)
+  const [selectedCol, setSelectedCol] = useState<string | null>(null)
+  const { isOpen: isHistOpen, onOpen: onHistOpen, onClose: onHistClose } = useDisclosure()
 
-  const activeTab = DATA_TABS[activeTabIdx]
+  // ── Fetch datasource registry ────────────────────────────────────────────
+  const { data: datasourcesResp, isLoading: dsLoading } = useQuery({
+    queryKey: ["datasources"],
+    queryFn: () =>
+      axios.get("/api/v1/datasources/").then((r) => r.data as { data: DatasourceInfo[]; count: number }),
+  })
+
+  const dataTabs: DatasourceInfo[] = datasourcesResp?.data ?? []
+  const activeTab = dataTabs[activeTabIdx] ?? dataTabs[0]
 
   const { data: cropsData } = useQuery({
     queryKey: ["crops", state],
@@ -173,10 +283,10 @@ function ExplorePage() {
   })
 
   const { data: currentData, isLoading } = useQuery({
-    queryKey: ["explore", activeTab.key, queryParams],
+    queryKey: ["explore", activeTab?.key, queryParams],
     queryFn: () =>
       axios.get(activeTab.endpoint, { params: queryParams }).then((r) => r.data),
-    enabled: submitted,
+    enabled: submitted && !!activeTab,
   })
 
   const { data: ingestStatus, refetch: refetchStatus } = useQuery({
@@ -207,7 +317,7 @@ function ExplorePage() {
   const handleFetch = () => {
     const params: Record<string, string> = { state }
     if (county) params.county = county
-    if (crop && activeTab.key === "yields") params.crop = crop
+    if (crop && activeTab?.key === "yields") params.crop = crop
     if (startYear) params.start_year = startYear
     if (endYear) params.end_year = endYear
     setQueryParams(params)
@@ -218,15 +328,20 @@ function ExplorePage() {
   const columns = tableRows.length > 0 ? Object.keys(tableRows[0]) : []
   const numericCols = columns.filter((c) => typeof tableRows[0]?.[c] === "number")
 
+  const handleColClick = (col: string) => {
+    if (numericCols.includes(col)) {
+      setSelectedCol(col)
+      onHistOpen()
+    }
+  }
+
   return (
     <Stack spacing={6}>
       <Heading size="lg" color="green.700">Data Explorer</Heading>
 
       {/* ── Filters ─────────────────────────────────────────────────────── */}
       <Card>
-        <CardHeader>
-          <Heading size="md">Filters</Heading>
-        </CardHeader>
+        <CardHeader><Heading size="md">Filters</Heading></CardHeader>
         <CardBody>
           <Flex gap={4} wrap="wrap" align="flex-end">
             <FormControl maxW="200px">
@@ -243,7 +358,7 @@ function ExplorePage() {
                 onChange={(e) => setCounty(e.target.value)}
               />
             </FormControl>
-            {activeTab.key === "yields" && (
+            {activeTab?.key === "yields" && (
               <FormControl maxW="160px">
                 <FormLabel>Crop</FormLabel>
                 <Select value={crop} onChange={(e) => setCrop(e.target.value)} placeholder="All crops">
@@ -253,111 +368,126 @@ function ExplorePage() {
             )}
             <FormControl maxW="110px">
               <FormLabel>Start Year</FormLabel>
-              <Input
-                type="number"
-                value={startYear}
-                onChange={(e) => setStartYear(e.target.value)}
-                aria-label="Start Year"
-              />
+              <Input type="number" value={startYear} onChange={(e) => setStartYear(e.target.value)} aria-label="Start Year" />
             </FormControl>
             <FormControl maxW="110px">
               <FormLabel>End Year</FormLabel>
-              <Input
-                type="number"
-                value={endYear}
-                onChange={(e) => setEndYear(e.target.value)}
-                aria-label="End Year"
-              />
+              <Input type="number" value={endYear} onChange={(e) => setEndYear(e.target.value)} aria-label="End Year" />
             </FormControl>
-            <Button colorScheme="green" onClick={handleFetch}>
-              Load Data
-            </Button>
+            <Button colorScheme="green" onClick={handleFetch}>Load Data</Button>
           </Flex>
         </CardBody>
       </Card>
 
-      {/* ── Data type tabs ───────────────────────────────────────────────── */}
-      <Tabs
-        index={activeTabIdx}
-        onChange={(i) => { setActiveTabIdx(i); setSubmitted(false) }}
-        colorScheme="green"
-        variant="enclosed"
-        isLazy
-      >
-        <TabList>
-          {DATA_TABS.map((t) => <Tab key={t.key}>{t.label}</Tab>)}
-        </TabList>
+      {/* ── Data type tabs (data-driven from /api/v1/datasources/) ───────── */}
+      {dsLoading ? (
+        <Flex justify="center" py={6}><Spinner color="green.500" /></Flex>
+      ) : (
+        <Tabs
+          index={activeTabIdx}
+          onChange={(i) => { setActiveTabIdx(i); setSubmitted(false) }}
+          colorScheme="green"
+          variant="enclosed"
+          isLazy
+        >
+          <TabList>
+            {dataTabs.map((t) => (
+              <Tooltip key={t.key} label={t.description} placement="top" hasArrow>
+                <Tab>{t.label}</Tab>
+              </Tooltip>
+            ))}
+          </TabList>
 
-        <TabPanels>
-          {DATA_TABS.map((t) => (
-            <TabPanel key={t.key} p={0} pt={4}>
-              {isLoading && (
-                <Flex justify="center" py={8}>
-                  <Spinner size="xl" color="green.500" />
-                </Flex>
-              )}
+          <TabPanels>
+            {dataTabs.map((t) => (
+              <TabPanel key={t.key} p={0} pt={4}>
+                {isLoading && (
+                  <Flex justify="center" py={8}><Spinner size="xl" color="green.500" /></Flex>
+                )}
 
-              {!isLoading && submitted && (
-                <Card>
-                  <CardHeader>
-                    <Flex align="center" gap={3} wrap="wrap">
-                      <Heading size="md">{t.label} Results</Heading>
-                      <Badge colorScheme="green">{currentData?.count ?? 0} records</Badge>
-                      {county && <Badge colorScheme="blue">{county}</Badge>}
-                      {state && <Badge colorScheme="purple">{state}</Badge>}
-                    </Flex>
-                  </CardHeader>
-                  <CardBody>
-                    {tableRows.length === 0 ? (
-                      <EmptyState
-                        tab={t.key}
-                        ingestStatus={ingestStatus}
-                        ingestMutation={ingestMutation}
-                        dailyIngestMutation={dailyIngestMutation}
-                      />
-                    ) : (
-                      <>
-                        <SummaryStats rows={tableRows} numericCols={numericCols} />
-                        {(t.key === "yields" || t.key === "weather" || t.key === "daily_weather") && (
-                          <TimeSeriesChart rows={tableRows} tab={t.key} />
-                        )}
-                        <Divider my={3} />
-                        <Text fontSize="xs" color="gray.500" mb={2}>
-                          Showing {Math.min(tableRows.length, 200)} of {currentData?.count ?? tableRows.length} total
-                        </Text>
-                        <Box overflowX="auto">
-                          <Table size="sm" variant="striped">
-                            <Thead>
-                              <Tr>
-                                {columns.map((col) => <Th key={col}>{col}</Th>)}
-                              </Tr>
-                            </Thead>
-                            <Tbody>
-                              {tableRows.slice(0, 200).map((row, i) => (
-                                <Tr key={i}>
+                {!isLoading && submitted && (
+                  <Card>
+                    <CardHeader>
+                      <Flex align="center" gap={3} wrap="wrap">
+                        <Heading size="md">{t.label} Results</Heading>
+                        <Badge colorScheme="green">{currentData?.count ?? 0} records</Badge>
+                        {county && <Badge colorScheme="blue">{county}</Badge>}
+                        {state && <Badge colorScheme="purple">{state}</Badge>}
+                      </Flex>
+                    </CardHeader>
+                    <CardBody>
+                      {tableRows.length === 0 ? (
+                        <EmptyState
+                          tab={t.key}
+                          ingestStatus={ingestStatus}
+                          ingestMutation={ingestMutation}
+                          dailyIngestMutation={dailyIngestMutation}
+                        />
+                      ) : (
+                        <>
+                          <SummaryStats rows={tableRows} numericCols={numericCols} />
+                          <TimeSeriesChart rows={tableRows} tab={t} />
+                          <Divider my={3} />
+                          <Text fontSize="xs" color="gray.500" mb={1}>
+                            Showing {Math.min(tableRows.length, 200)} of {currentData?.count ?? tableRows.length} total
+                          </Text>
+                          <Text fontSize="xs" color="gray.400" mb={2}>
+                            💡 Click a numeric column header to see its distribution.
+                          </Text>
+                          <Box overflowX="auto">
+                            <Table size="sm" variant="striped">
+                              <Thead>
+                                <Tr>
                                   {columns.map((col) => (
-                                    <Td key={col}>{row[col] != null ? String(row[col]) : ""}</Td>
+                                    <Th
+                                      key={col}
+                                      cursor={numericCols.includes(col) ? "pointer" : "default"}
+                                      _hover={numericCols.includes(col) ? { color: "green.600", textDecoration: "underline" } : {}}
+                                      onClick={() => handleColClick(col)}
+                                      title={numericCols.includes(col) ? `Click to view ${col} distribution` : undefined}
+                                    >
+                                      {col}
+                                    </Th>
                                   ))}
                                 </Tr>
-                              ))}
-                            </Tbody>
-                          </Table>
-                        </Box>
-                      </>
-                    )}
-                  </CardBody>
-                </Card>
-              )}
+                              </Thead>
+                              <Tbody>
+                                {tableRows.slice(0, 200).map((row, i) => (
+                                  <Tr key={i}>
+                                    {columns.map((col) => (
+                                      <Td key={col}>{row[col] != null ? String(row[col]) : ""}</Td>
+                                    ))}
+                                  </Tr>
+                                ))}
+                              </Tbody>
+                            </Table>
+                          </Box>
+                        </>
+                      )}
+                    </CardBody>
+                  </Card>
+                )}
 
-              {!submitted && (
-                <Text color="gray.500" fontSize="sm" mt={2}>
-                  Set filters above and click <strong>Load Data</strong> to explore {t.label.toLowerCase()} data.
-                </Text>
-              )}
-            </TabPanel>
-          ))}
-        </TabPanels>
-      </Tabs>
+                {!submitted && (
+                  <Text color="gray.500" fontSize="sm" mt={2}>
+                    Set filters above and click <strong>Load Data</strong> to explore {t.label.toLowerCase()} data.
+                  </Text>
+                )}
+              </TabPanel>
+            ))}
+          </TabPanels>
+        </Tabs>
+      )}
+
+      {/* ── Column histogram modal ───────────────────────────────────────── */}
+      {selectedCol && (
+        <ColumnHistogram
+          isOpen={isHistOpen}
+          onClose={onHistClose}
+          col={selectedCol}
+          rows={tableRows}
+        />
+      )}
 
       {/* ── Ingest controls ─────────────────────────────────────────────── */}
       <Card>
@@ -365,6 +495,7 @@ function ExplorePage() {
           <Heading size="md">Data Ingestion</Heading>
           <Text fontSize="sm" color="gray.500" mt={1}>
             Fetch fresh data from USDA NASS, Daymet, and SSURGO APIs and store it in the database.
+            For more control, use the <strong>Ingest</strong> page.
           </Text>
         </CardHeader>
         <CardBody>
@@ -399,7 +530,6 @@ function ExplorePage() {
                 <Text fontWeight="medium" fontSize="sm">Daily Weather Only</Text>
                 <Text fontSize="xs" color="gray.500">
                   Required for ApsimX simulations — loads Daymet daily records into the daily_weather table.
-                  {county && <> Specify a county above to scope the ingest.</>}
                 </Text>
               </Stack>
               <Button
@@ -432,13 +562,15 @@ function ExplorePage() {
   )
 }
 
+// ── Empty state ────────────────────────────────────────────────────────────
+
 function EmptyState({
   tab,
   ingestStatus,
   ingestMutation,
   dailyIngestMutation,
 }: {
-  tab: DataTab
+  tab: string
   ingestStatus: { status: "idle" | "running" } | undefined
   ingestMutation: { isPending: boolean; isError: boolean; error: unknown; mutate: () => void }
   dailyIngestMutation: { isPending: boolean; mutate: () => void }
@@ -448,7 +580,7 @@ function EmptyState({
       <Alert status="info" borderRadius="md">
         <AlertIcon />
         <Box>
-          <AlertTitle>No {tab.replace("_", " ")} data found</AlertTitle>
+          <AlertTitle>No {tab.replace(/_/g, " ")} data found</AlertTitle>
           <AlertDescription fontSize="sm">
             {tab === "daily_weather"
               ? "No daily weather in the database. Click 'Ingest Daily Weather' below to load Daymet records."

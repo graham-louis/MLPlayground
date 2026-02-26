@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.8.23">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+
+<title>architecture</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+</style>
+
+
+<script src="architecture_files/libs/clipboard/clipboard.min.js"></script>
+<script src="architecture_files/libs/quarto-html/quarto.js" type="module"></script>
+<script src="architecture_files/libs/quarto-html/tabsets/tabsets.js" type="module"></script>
+<script src="architecture_files/libs/quarto-html/axe/axe-check.js" type="module"></script>
+<script src="architecture_files/libs/quarto-html/popper.min.js"></script>
+<script src="architecture_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="architecture_files/libs/quarto-html/anchor.min.js"></script>
+<link href="architecture_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="architecture_files/libs/quarto-html/quarto-syntax-highlighting-1fe81d0376b2c50856e68e651e390326.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="architecture_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="architecture_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="architecture_files/libs/bootstrap/bootstrap-d6a003b94517c951b2d65075d42fb01b.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
+
+
+</head>
+
+<body class="fullcontent quarto-light">
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
+
+<main class="content" id="quarto-document-content">
+
+
+
+
+<section id="mlplayground-architecture-design-diagrams" class="level1">
+<h1>MLPlayground — Architecture &amp; Design Diagrams</h1>
+<blockquote class="blockquote">
+<p>All diagrams use <a href="https://mermaid.js.org/">Mermaid</a>. Render them in any Mermaid-compatible viewer (GitHub, VS Code extension, mermaid.live).</p>
+</blockquote>
+<hr>
+<section id="system-architecture" class="level2">
+<h2 class="anchored" data-anchor-id="system-architecture">1. System Architecture</h2>
+<p>High-level view of all components and how they communicate.</p>
+<pre class="mermaid"><code>graph TB
+    subgraph Browser["Browser (React / TanStack Router)"]
+        UI_Explore["Data Explorer\n/explore"]
+        UI_Ingest["Ingest\n/ingest"]
+        UI_Model["Model Training\n/model"]
+    end
+
+    subgraph API["FastAPI Backend (:8000)"]
+        RT_Yields["/api/v1/yields/"]
+        RT_Weather["/api/v1/weather/"]
+        RT_Soil["/api/v1/soil/"]
+        RT_DW["/api/v1/daily-weather/"]
+        RT_Ingest["/api/v1/ingest/\nrun · status/{job_id}"]
+        RT_Models["/api/v1/models/\ntrain · predict · runs"]
+        RT_DS["/api/v1/datasources/"]
+        RT_Sim["/api/v1/models/simulate"]
+    end
+
+    subgraph DB["PostgreSQL"]
+        T_Yields[(yields)]
+        T_Weather[(weather)]
+        T_Soil[(soil)]
+        T_DW[(daily_weather)]
+        T_Runs[(model_runs)]
+    end
+
+    subgraph Ext["External APIs"]
+        NASS["USDA NASS\nCrop yields"]
+        NLDAS["NASA NLDAS-2\nWeather"]
+        SSURGO["USDA SSURGO\nSoil"]
+    end
+
+    subgraph Artifacts["Local Disk /app/artifacts"]
+        PKL["Trained models\n*.pkl (joblib)"]
+    end
+
+    subgraph Sim["ApsimX Simulator"]
+        APSIM["APSIM Next Gen\n(subprocess)"]
+    end
+
+    Browser --&gt;|REST/JSON| API
+    API --&gt; DB
+    RT_Ingest --&gt;|HTTP fetch| Ext
+    RT_Models --&gt;|save/load| Artifacts
+    RT_Sim --&gt;|subprocess| APSIM
+    APSIM --&gt;|reads from| DB
+
+    classDef frontend fill:#3b82f6,color:#fff,stroke:#1d4ed8
+    classDef api fill:#6366f1,color:#fff,stroke:#4338ca
+    classDef db fill:#d97706,color:#fff,stroke:#b45309
+    classDef ext fill:#ea580c,color:#fff,stroke:#c2410c
+    classDef artifact fill:#475569,color:#fff,stroke:#334155
+    classDef sim fill:#e11d48,color:#fff,stroke:#be123c
+
+    class UI_Explore,UI_Ingest,UI_Model frontend
+    class RT_Yields,RT_Weather,RT_Soil,RT_DW,RT_Ingest,RT_Models,RT_DS,RT_Sim api
+    class T_Yields,T_Weather,T_Soil,T_DW,T_Runs db
+    class NASS,NLDAS,SSURGO ext
+    class PKL artifact
+    class APSIM sim
+
+    style Browser fill:#dbeafe,stroke:#93c5fd,color:#1e3a8a
+    style API fill:#e0e7ff,stroke:#a5b4fc,color:#312e81
+    style DB fill:#fef3c7,stroke:#fcd34d,color:#78350f
+    style Ext fill:#ffedd5,stroke:#fed7aa,color:#7c2d12
+    style Artifacts fill:#f1f5f9,stroke:#cbd5e1,color:#1e293b
+    style Sim fill:#ffe4e6,stroke:#fecdd3,color:#881337</code></pre>
+<hr>
+</section>
+<section id="data-flow-ingestion-training-prediction" class="level2">
+<h2 class="anchored" data-anchor-id="data-flow-ingestion-training-prediction">2. Data Flow — Ingestion → Training → Prediction</h2>
+<p>End-to-end lifecycle of data.</p>
+<pre class="mermaid"><code>%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#e0e7ff', 'actorBorder': '#6366f1', 'actorTextColor': '#1e3a8a', 'activationBkgColor': '#bfdbfe', 'activationBorderColor': '#3b82f6', 'noteBkgColor': '#fef3c7', 'noteTextColor': '#78350f', 'loopTextColor': '#312e81'}}}%%
+---
+id: 7694206f-a370-44f9-87f0-113ac40048d5
+---
+sequenceDiagram
+    actor User
+    participant FE as Frontend
+    participant API as FastAPI
+    participant Ingest as Ingest Module
+    participant ExtAPI as External API
+    participant DB as PostgreSQL
+    participant ML as ML Module
+    participant Disk as Artifacts Disk
+
+    User-&gt;&gt;FE: Select datasources + scope, click Ingest
+    FE-&gt;&gt;API: POST /api/v1/ingest/run {sources, scope}
+    API--&gt;&gt;FE: {job_id}
+    FE-&gt;&gt;API: GET /api/v1/ingest/status/{job_id}  (poll every 2s)
+    loop per county
+        API-&gt;&gt;Ingest: fetch_and_transform(county, year_range)
+        Ingest-&gt;&gt;ExtAPI: HTTP request
+        ExtAPI--&gt;&gt;Ingest: raw data
+        Ingest-&gt;&gt;DB: UPSERT rows
+        API--&gt;&gt;FE: {progress, status, message}
+    end
+    API--&gt;&gt;FE: {status: "done"}
+
+    User-&gt;&gt;FE: Configure model, click Train
+    FE-&gt;&gt;API: POST /api/v1/models/train {model_type, filters, features}
+    API-&gt;&gt;DB: SELECT joined data
+    DB--&gt;&gt;API: DataFrame
+    API-&gt;&gt;ML: fit(X_train, y_train)
+    ML--&gt;&gt;API: fitted model + metrics
+    API-&gt;&gt;Disk: joblib.dump(model, {run_id}.pkl)
+    API-&gt;&gt;DB: INSERT model_runs row
+    API--&gt;&gt;FE: {run_id, r2, rmse, feature_importances}
+    FE-&gt;&gt;User: Show results + "Model Saved" alert
+
+    User-&gt;&gt;FE: Enter features, click Predict
+    FE-&gt;&gt;API: POST /api/v1/models/{run_id}/predict {features}
+    API-&gt;&gt;Disk: joblib.load({run_id}.pkl)
+    API--&gt;&gt;FE: {predicted_yield, units}
+    FE-&gt;&gt;User: Show prediction</code></pre>
+<hr>
+</section>
+<section id="database-schema" class="level2">
+<h2 class="anchored" data-anchor-id="database-schema">3. Database Schema</h2>
+<pre class="mermaid"><code>%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#fef3c7', 'primaryBorderColor': '#d97706', 'primaryTextColor': '#78350f', 'lineColor': '#6b7280', 'attributeBackgroundColorEven': '#fffbeb', 'attributeBackgroundColorOdd': '#fef9c3'}}}%%
+erDiagram
+    YIELDS {
+        int     id          PK
+        string  state
+        string  county
+        string  crop
+        int     year
+        float   value
+        string  unit
+    }
+
+    WEATHER {
+        int     id          PK
+        string  state
+        string  county
+        int     year
+        int     month
+        float   avg_temp
+        float   precipitation
+    }
+
+    SOIL {
+        int     id          PK
+        string  state
+        string  county
+        float   ph
+        float   organic_matter
+        float   sand_pct
+        float   silt_pct
+        float   clay_pct
+        float   cec
+        float   water_capacity
+    }
+
+    DAILY_WEATHER {
+        int     id          PK
+        string  state
+        string  county
+        int     year
+        int     month
+        int     day
+        float   tmax
+        float   tmin
+        float   precip
+        float   srad
+        float   vp
+        float   wind
+    }
+
+    MODEL_RUNS {
+        string  run_id      PK
+        string  model_type
+        string  state
+        string  crop
+        int     start_year
+        int     end_year
+        float   r2
+        float   rmse
+        int     n_train
+        int     n_test
+        json    feature_columns
+        json    filters
+        json    datasources
+        json    join_keys
+        datetime created_at
+    }
+
+    YIELDS ||--o{ MODEL_RUNS : "trained on"
+    WEATHER ||--o{ MODEL_RUNS : "trained on"
+    SOIL ||--o{ MODEL_RUNS : "trained on"
+    DAILY_WEATHER ||--o{ MODEL_RUNS : "trained on"</code></pre>
+<hr>
+</section>
+<section id="datasource-registry-adding-a-new-data-source" class="level2">
+<h2 class="anchored" data-anchor-id="datasource-registry-adding-a-new-data-source">4. Datasource Registry — Adding a New Data Source</h2>
+<p>Step-by-step process to register a new datasource so it appears automatically in the Explorer and Ingest pages.</p>
+<pre class="mermaid"><code>flowchart TD
+    A[Create ingest module\nbackend/app/ingest/my_source.py] --&gt; B[Implement fetch_and_transform\nReturns pandas DataFrame]
+    B --&gt; C[Implement save_to_db\nUpserts rows via SQLAlchemy]
+    C --&gt; D[Add SQLModel table\nbackend/app/models.py]
+    D --&gt; E[Create Alembic migration\nalembic revision --autogenerate]
+    E --&gt; F[Add FastAPI router\nbackend/app/api/routes/my_source.py]
+    F --&gt; G[Register with DatasourceRegistry\nDATASOURCE_REGISTRY.register in registry.py]
+    G --&gt; H[Include router in main.py]
+    H --&gt; I[Frontend auto-detects\nExplore tabs and Ingest scope\ndriven by /api/v1/datasources/]
+
+    classDef ingest fill:#0d9488,color:#fff,stroke:#0f766e
+    classDef db fill:#d97706,color:#fff,stroke:#b45309
+    classDef api fill:#6366f1,color:#fff,stroke:#4338ca
+    classDef frontend fill:#3b82f6,color:#fff,stroke:#1d4ed8
+
+    class A,B,C ingest
+    class D,E db
+    class F,G,H api
+    class I frontend</code></pre>
+<section id="registry-entry-fields" class="level3">
+<h3 class="anchored" data-anchor-id="registry-entry-fields">Registry Entry Fields</h3>
+<table class="caption-top table">
+<colgroup>
+<col style="width: 43%">
+<col style="width: 56%">
+</colgroup>
+<thead>
+<tr class="header">
+<th>Field</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>key</code></td>
+<td>Unique identifier (e.g.&nbsp;<code>"yields"</code>)</td>
+</tr>
+<tr class="even">
+<td><code>label</code></td>
+<td>Human-readable name shown in tabs</td>
+</tr>
+<tr class="odd">
+<td><code>endpoint</code></td>
+<td>API path for fetching data (e.g.&nbsp;<code>"/api/v1/yields/"</code>)</td>
+</tr>
+<tr class="even">
+<td><code>columns</code></td>
+<td>Column definitions <code>{name, type}</code> shown in Explorer table headers</td>
+</tr>
+<tr class="odd">
+<td><code>scope_params</code></td>
+<td>Filter inputs rendered in Ingest UI (state, year range, etc.)</td>
+</tr>
+<tr class="even">
+<td><code>description</code></td>
+<td>Tooltip text shown in Explorer tab</td>
+</tr>
+</tbody>
+</table>
+<hr>
+</section>
+</section>
+<section id="model-registry-adding-a-new-model-type" class="level2">
+<h2 class="anchored" data-anchor-id="model-registry-adding-a-new-model-type">5. Model Registry — Adding a New Model Type</h2>
+<pre class="mermaid"><code>flowchart TD
+    A[Choose model kind:\nsklearn / pytorch / simulation] --&gt; B{Kind}
+
+    B --&gt;|sklearn| C[Add entry to MODEL_REGISTRY dict\nin backend/app/api/routes/models.py]
+    B --&gt;|pytorch| D[Implement train_lstm in\nbackend/app/ingest/lstm_trainer.py]
+    B --&gt;|simulation| E[Implement runner in\nbackend/app/ingest/my_simulator.py]
+
+    C --&gt; F[Add elif branch in /train endpoint\nfit model, compute metrics]
+    D --&gt; F
+    E --&gt; F
+
+    F --&gt; G{supports_predict?}
+    G --&gt;|Yes| H[joblib.dump artifact\nInsert model_runs row]
+    G --&gt;|No - simulation| I[Return metrics only\nrun_id = None]
+
+    H --&gt; J[Frontend shows model in\ndropdown and Saved Models tab]
+    I --&gt; J
+
+    J --&gt; K[Predict endpoint\nGET /api/v1/models/types auto-includes it]
+
+    classDef decision fill:#f8fafc,color:#1e293b,stroke:#94a3b8
+    classDef api fill:#6366f1,color:#fff,stroke:#4338ca
+    classDef ml fill:#16a34a,color:#fff,stroke:#15803d
+    classDef sim fill:#e11d48,color:#fff,stroke:#be123c
+    classDef artifact fill:#475569,color:#fff,stroke:#334155
+    classDef frontend fill:#3b82f6,color:#fff,stroke:#1d4ed8
+
+    class B,G decision
+    class A,F api
+    class C,D ml
+    class E sim
+    class H,I artifact
+    class J,K frontend</code></pre>
+<hr>
+</section>
+<section id="apsimx-simulation-flow" class="level2">
+<h2 class="anchored" data-anchor-id="apsimx-simulation-flow">6. ApsimX Simulation Flow</h2>
+<pre class="mermaid"><code>%%{init: {'theme': 'base', 'themeVariables': {'actorBkg': '#e0e7ff', 'actorBorder': '#6366f1', 'actorTextColor': '#1e3a8a', 'activationBkgColor': '#bfdbfe', 'activationBorderColor': '#3b82f6', 'noteBkgColor': '#fef3c7', 'noteTextColor': '#78350f', 'loopTextColor': '#312e81'}}}%%
+sequenceDiagram
+    actor User
+    participant FE as Frontend
+    participant API as FastAPI
+    participant Runner as apsimx_runner.py
+    participant DB as PostgreSQL
+    participant APSIM as ApsimX Subprocess
+
+    User-&gt;&gt;FE: Select ApsimX model type, configure filters, click Train
+    FE-&gt;&gt;API: POST /api/v1/models/train {model_type: "apsimx", state, crop, county, years}
+    API-&gt;&gt;DB: SELECT daily_weather WHERE state/county/years
+    DB--&gt;&gt;API: daily weather rows
+    API-&gt;&gt;DB: SELECT soil WHERE state/county
+    DB--&gt;&gt;API: soil properties row
+    API-&gt;&gt;Runner: simulate_yields(session, state, county, crop, start_year, end_year)
+    Runner-&gt;&gt;Runner: build_apsimx_config(weather_df, soil_row)
+    Runner-&gt;&gt;Runner: write temp .apsimx file
+    Runner-&gt;&gt;APSIM: subprocess.run(["dotnet", "Models.dll", file.apsimx])
+    APSIM--&gt;&gt;Runner: stdout yield output
+    Runner-&gt;&gt;Runner: parse_apsim_output()
+    Runner--&gt;&gt;API: predicted yields list
+    API--&gt;&gt;FE: {simulated_yields, n_years, model_type: "apsimx"}
+    FE-&gt;&gt;User: Show simulation results table</code></pre>
+<hr>
+</section>
+<section id="frontend-page-map" class="level2">
+<h2 class="anchored" data-anchor-id="frontend-page-map">7. Frontend Page Map</h2>
+<pre class="mermaid"><code>graph LR
+    Nav["Nav Bar"] --&gt; Explore["/explore\nData Explorer"]
+    Nav --&gt; Ingest["/ingest\nData Ingestion"]
+    Nav --&gt; Model["/model\nModel Training"]
+
+    Explore --&gt; ExTab1["Tabs (data-driven)\nfrom /api/v1/datasources/"]
+    ExTab1 --&gt; ExFilter["Filter: state · county · years · crop"]
+    ExFilter --&gt; ExTable["Data table\n+ column histogram on click"]
+
+    Ingest --&gt; InSel["Datasource multi-select"]
+    InSel --&gt; InScope["Scope params\n(state, year range)"]
+    InScope --&gt; InProgress["POST /ingest/run → job_id\nProgress bar polling"]
+
+    Model --&gt; MTrain["Train &amp; Evaluate tab"]
+    Model --&gt; MPredict["Predict Yield tab"]
+    Model --&gt; MSaved["Saved Models tab"]
+
+    MTrain --&gt; MConfig["Model type (from API)\nState · Crop · Year range\nFeature columns"]
+    MConfig --&gt; MResults["R² · RMSE · Feature importances\nModel Saved badge"]
+    MSaved --&gt; MSTable["Table of runs\nSelect for prediction"]
+
+    classDef nav fill:#1e293b,color:#fff,stroke:#0f172a
+    classDef page fill:#3b82f6,color:#fff,stroke:#1d4ed8
+    classDef tab fill:#6366f1,color:#fff,stroke:#4338ca
+    classDef content fill:#dbeafe,color:#1e3a8a,stroke:#93c5fd
+
+    class Nav nav
+    class Explore,Ingest,Model page
+    class ExTab1,InSel,MTrain,MPredict,MSaved tab
+    class ExFilter,ExTable,InScope,InProgress,MConfig,MResults,MSTable content</code></pre>
+<hr>
+</section>
+<section id="deployment-docker-compose" class="level2">
+<h2 class="anchored" data-anchor-id="deployment-docker-compose">8. Deployment (Docker Compose)</h2>
+<pre class="mermaid"><code>graph TB
+    subgraph compose["docker-compose stack"]
+        FE_SVC["frontend\n:3000 (Vite dev / nginx)"]
+        API_SVC["backend (FastAPI/Uvicorn)\n:8000"]
+        DB_SVC["postgres\n:5432"]
+    end
+
+    subgraph volumes["Named Volumes"]
+        PG_DATA[("postgres_data")]
+        ARTIFACTS[("./artifacts → /app/artifacts")]
+    end
+
+    FE_SVC --&gt;|HTTP proxy /api/*| API_SVC
+    API_SVC --&gt;|SQLAlchemy| DB_SVC
+    DB_SVC --- PG_DATA
+
+    classDef frontend fill:#3b82f6,color:#fff,stroke:#1d4ed8
+    classDef api fill:#6366f1,color:#fff,stroke:#4338ca
+    classDef db fill:#d97706,color:#fff,stroke:#b45309
+    classDef storage fill:#475569,color:#fff,stroke:#334155
+
+    class FE_SVC frontend
+    class API_SVC api
+    class DB_SVC db
+    class PG_DATA,ARTIFACTS storage
+
+    style compose fill:#f8fafc,stroke:#cbd5e1,color:#1e293b
+    style volumes fill:#f1f5f9,stroke:#94a3b8,color:#1e293b
+    API_SVC --- ARTIFACTS</code></pre>
+</section>
+</section>
+
+</main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+  window.document.addEventListener("DOMContentLoaded", function (event) {
+    const icon = "";
+    const anchorJS = new window.AnchorJS();
+    anchorJS.options = {
+      placement: 'right',
+      icon: icon
+    };
+    anchorJS.add('.anchored');
+    const isCodeAnnotation = (el) => {
+      for (const clz of el.classList) {
+        if (clz.startsWith('code-annotation-')) {                     
+          return true;
+        }
+      }
+      return false;
+    }
+    const onCopySuccess = function(e) {
+      // button target
+      const button = e.trigger;
+      // don't keep focus
+      button.blur();
+      // flash "checked"
+      button.classList.add('code-copy-button-checked');
+      var currentTitle = button.getAttribute("title");
+      button.setAttribute("title", "Copied!");
+      let tooltip;
+      if (window.bootstrap) {
+        button.setAttribute("data-bs-toggle", "tooltip");
+        button.setAttribute("data-bs-placement", "left");
+        button.setAttribute("data-bs-title", "Copied!");
+        tooltip = new bootstrap.Tooltip(button, 
+          { trigger: "manual", 
+            customClass: "code-copy-button-tooltip",
+            offset: [0, -8]});
+        tooltip.show();    
+      }
+      setTimeout(function() {
+        if (tooltip) {
+          tooltip.hide();
+          button.removeAttribute("data-bs-title");
+          button.removeAttribute("data-bs-toggle");
+          button.removeAttribute("data-bs-placement");
+        }
+        button.setAttribute("title", currentTitle);
+        button.classList.remove('code-copy-button-checked');
+      }, 1000);
+      // clear code selection
+      e.clearSelection();
+    }
+    const getTextToCopy = function(trigger) {
+      const outerScaffold = trigger.parentElement.cloneNode(true);
+      const codeEl = outerScaffold.querySelector('code');
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+    const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+      text: getTextToCopy
+    });
+    clipboard.on('success', onCopySuccess);
+    if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+      const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+        text: getTextToCopy,
+        container: window.document.getElementById('quarto-embedded-source-code-modal')
+      });
+      clipboardModal.on('success', onCopySuccess);
+    }
+      var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+      var mailtoRegex = new RegExp(/^mailto:/);
+        var filterRegex = new RegExp('/' + window.location.host + '/');
+      var isInternal = (href) => {
+          return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+      }
+      // Inspect non-navigation links and adorn them if external
+     var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+      for (var i=0; i<links.length; i++) {
+        const link = links[i];
+        if (!isInternal(link.href)) {
+          // undo the damage that might have been done by quarto-nav.js in the case of
+          // links that we want to consider external
+          if (link.dataset.originalHref !== undefined) {
+            link.href = link.dataset.originalHref;
+          }
+        }
+      }
+    function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+      const config = {
+        allowHTML: true,
+        maxWidth: 500,
+        delay: 100,
+        arrow: false,
+        appendTo: function(el) {
+            return el.parentElement;
+        },
+        interactive: true,
+        interactiveBorder: 10,
+        theme: 'quarto',
+        placement: 'bottom-start',
+      };
+      if (contentFn) {
+        config.content = contentFn;
+      }
+      if (onTriggerFn) {
+        config.onTrigger = onTriggerFn;
+      }
+      if (onUntriggerFn) {
+        config.onUntrigger = onUntriggerFn;
+      }
+      window.tippy(el, config); 
+    }
+    const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+    for (var i=0; i<noterefs.length; i++) {
+      const ref = noterefs[i];
+      tippyHover(ref, function() {
+        // use id or data attribute instead here
+        let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+        try { href = new URL(href).hash; } catch {}
+        const id = href.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note) {
+          return note.innerHTML;
+        } else {
+          return "";
+        }
+      });
+    }
+    const xrefs = window.document.querySelectorAll('a.quarto-xref');
+    const processXRef = (id, note) => {
+      // Strip column container classes
+      const stripColumnClz = (el) => {
+        el.classList.remove("page-full", "page-columns");
+        if (el.children) {
+          for (const child of el.children) {
+            stripColumnClz(child);
+          }
+        }
+      }
+      stripColumnClz(note)
+      if (id === null || id.startsWith('sec-')) {
+        // Special case sections, only their first couple elements
+        const container = document.createElement("div");
+        if (note.children && note.children.length > 2) {
+          container.appendChild(note.children[0].cloneNode(true));
+          for (let i = 1; i < note.children.length; i++) {
+            const child = note.children[i];
+            if (child.tagName === "P" && child.innerText === "") {
+              continue;
+            } else {
+              container.appendChild(child.cloneNode(true));
+              break;
+            }
+          }
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(container);
+          }
+          return container.innerHTML
+        } else {
+          if (window.Quarto?.typesetMath) {
+            window.Quarto.typesetMath(note);
+          }
+          return note.innerHTML;
+        }
+      } else {
+        // Remove any anchor links if they are present
+        const anchorLink = note.querySelector('a.anchorjs-link');
+        if (anchorLink) {
+          anchorLink.remove();
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        if (note.classList.contains("callout")) {
+          return note.outerHTML;
+        } else {
+          return note.innerHTML;
+        }
+      }
+    }
+    for (var i=0; i<xrefs.length; i++) {
+      const xref = xrefs[i];
+      tippyHover(xref, undefined, function(instance) {
+        instance.disable();
+        let url = xref.getAttribute('href');
+        let hash = undefined; 
+        if (url.startsWith('#')) {
+          hash = url;
+        } else {
+          try { hash = new URL(url).hash; } catch {}
+        }
+        if (hash) {
+          const id = hash.replace(/^#\/?/, "");
+          const note = window.document.getElementById(id);
+          if (note !== null) {
+            try {
+              const html = processXRef(id, note.cloneNode(true));
+              instance.setContent(html);
+            } finally {
+              instance.enable();
+              instance.show();
+            }
+          } else {
+            // See if we can fetch this
+            fetch(url.split('#')[0])
+            .then(res => res.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const htmlDoc = parser.parseFromString(html, "text/html");
+              const note = htmlDoc.getElementById(id);
+              if (note !== null) {
+                const html = processXRef(id, note);
+                instance.setContent(html);
+              } 
+            }).finally(() => {
+              instance.enable();
+              instance.show();
+            });
+          }
+        } else {
+          // See if we can fetch a full url (with no hash to target)
+          // This is a special case and we should probably do some content thinning / targeting
+          fetch(url)
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.querySelector('main.content');
+            if (note !== null) {
+              // This should only happen for chapter cross references
+              // (since there is no id in the URL)
+              // remove the first header
+              if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+                note.children[0].remove();
+              }
+              const html = processXRef(null, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      }, function(instance) {
+      });
+    }
+        let selectedAnnoteEl;
+        const selectorForAnnotation = ( cell, annotation) => {
+          let cellAttr = 'data-code-cell="' + cell + '"';
+          let lineAttr = 'data-code-annotation="' +  annotation + '"';
+          const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+          return selector;
+        }
+        const selectCodeLines = (annoteEl) => {
+          const doc = window.document;
+          const targetCell = annoteEl.getAttribute("data-target-cell");
+          const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+          const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+          const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+          const lineIds = lines.map((line) => {
+            return targetCell + "-" + line;
+          })
+          let top = null;
+          let height = null;
+          let parent = null;
+          if (lineIds.length > 0) {
+              //compute the position of the single el (top and bottom and make a div)
+              const el = window.document.getElementById(lineIds[0]);
+              top = el.offsetTop;
+              height = el.offsetHeight;
+              parent = el.parentElement.parentElement;
+            if (lineIds.length > 1) {
+              const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+              const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+              height = bottom - top;
+            }
+            if (top !== null && height !== null && parent !== null) {
+              // cook up a div (if necessary) and position it 
+              let div = window.document.getElementById("code-annotation-line-highlight");
+              if (div === null) {
+                div = window.document.createElement("div");
+                div.setAttribute("id", "code-annotation-line-highlight");
+                div.style.position = 'absolute';
+                parent.appendChild(div);
+              }
+              div.style.top = top - 2 + "px";
+              div.style.height = height + 4 + "px";
+              div.style.left = 0;
+              let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+              if (gutterDiv === null) {
+                gutterDiv = window.document.createElement("div");
+                gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+                gutterDiv.style.position = 'absolute';
+                const codeCell = window.document.getElementById(targetCell);
+                const gutter = codeCell.querySelector('.code-annotation-gutter');
+                gutter.appendChild(gutterDiv);
+              }
+              gutterDiv.style.top = top - 2 + "px";
+              gutterDiv.style.height = height + 4 + "px";
+            }
+            selectedAnnoteEl = annoteEl;
+          }
+        };
+        const unselectCodeLines = () => {
+          const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+          elementsIds.forEach((elId) => {
+            const div = window.document.getElementById(elId);
+            if (div) {
+              div.remove();
+            }
+          });
+          selectedAnnoteEl = undefined;
+        };
+          // Handle positioning of the toggle
+      window.addEventListener(
+        "resize",
+        throttle(() => {
+          elRect = undefined;
+          if (selectedAnnoteEl) {
+            selectCodeLines(selectedAnnoteEl);
+          }
+        }, 10)
+      );
+      function throttle(fn, ms) {
+      let throttle = false;
+      let timer;
+        return (...args) => {
+          if(!throttle) { // first call gets through
+              fn.apply(this, args);
+              throttle = true;
+          } else { // all the others get throttled
+              if(timer) clearTimeout(timer); // cancel #2
+              timer = setTimeout(() => {
+                fn.apply(this, args);
+                timer = throttle = false;
+              }, ms);
+          }
+        };
+      }
+        // Attach click handler to the DT
+        const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+        for (const annoteDlNode of annoteDls) {
+          annoteDlNode.addEventListener('click', (event) => {
+            const clickedEl = event.target;
+            if (clickedEl !== selectedAnnoteEl) {
+              unselectCodeLines();
+              const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+              if (activeEl) {
+                activeEl.classList.remove('code-annotation-active');
+              }
+              selectCodeLines(clickedEl);
+              clickedEl.classList.add('code-annotation-active');
+            } else {
+              // Unselect the line
+              unselectCodeLines();
+              clickedEl.classList.remove('code-annotation-active');
+            }
+          });
+        }
+    const findCites = (el) => {
+      const parentEl = el.parentElement;
+      if (parentEl) {
+        const cites = parentEl.dataset.cites;
+        if (cites) {
+          return {
+            el,
+            cites: cites.split(' ')
+          };
+        } else {
+          return findCites(el.parentElement)
+        }
+      } else {
+        return undefined;
+      }
+    };
+    var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+    for (var i=0; i<bibliorefs.length; i++) {
+      const ref = bibliorefs[i];
+      const citeInfo = findCites(ref);
+      if (citeInfo) {
+        tippyHover(citeInfo.el, function() {
+          var popup = window.document.createElement('div');
+          citeInfo.cites.forEach(function(cite) {
+            var citeDiv = window.document.createElement('div');
+            citeDiv.classList.add('hanging-indent');
+            citeDiv.classList.add('csl-entry');
+            var biblioDiv = window.document.getElementById('ref-' + cite);
+            if (biblioDiv) {
+              citeDiv.innerHTML = biblioDiv.innerHTML;
+            }
+            popup.appendChild(citeDiv);
+          });
+          return popup.innerHTML;
+        });
+      }
+    }
+  });
+  </script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

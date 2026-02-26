@@ -28,8 +28,14 @@ import {
   TabList,
   TabPanel,
   TabPanels,
+  Table,
   Tabs,
+  Tbody,
+  Td,
   Text,
+  Th,
+  Thead,
+  Tr,
 } from "@chakra-ui/react"
 import { createFileRoute } from "@tanstack/react-router"
 import { useMutation, useQuery } from "@tanstack/react-query"
@@ -58,6 +64,7 @@ interface FeatureImportance {
 }
 
 interface TrainResult {
+  run_id?: string
   model_type: string
   n_samples: number
   n_train: number
@@ -69,6 +76,7 @@ interface TrainResult {
   crop: string
   start_year: number
   end_year: number
+  county?: string
 }
 
 interface PredictResult {
@@ -77,6 +85,26 @@ interface PredictResult {
   training_r2: number
   training_rmse: number
   units: string
+}
+
+interface ModelTypeInfo {
+  key: string
+  label: string
+  kind: string
+  description: string
+  supports_predict: boolean
+}
+
+interface ModelRunRecord {
+  id: number
+  run_id: string
+  model_type: string
+  feature_columns: string   // JSON
+  filters: string           // JSON
+  r2: number | null
+  rmse: number | null
+  n_samples: number | null
+  created_at: string
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -93,14 +121,6 @@ const ALL_FEATURES = [
   { key: "clay_pct",       label: "Clay Content (%)",           group: "Soil" },
 ]
 
-const MODEL_OPTIONS = [
-  { value: "random_forest",      label: "Random Forest",                     supportsPredict: true },
-  { value: "gradient_boosting",  label: "Gradient Boosting",                 supportsPredict: true },
-  { value: "linear_regression",  label: "Linear Regression",                 supportsPredict: true },
-  { value: "lstm",               label: "LSTM (Sequence Neural Network)",     supportsPredict: false },
-  { value: "apsimx",             label: "ApsimX (Process-Based Simulator)",   supportsPredict: false },
-]
-
 const US_STATES = [
   "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado",
   "Connecticut", "Delaware", "Florida", "Georgia", "Hawaii", "Idaho",
@@ -115,10 +135,9 @@ const US_STATES = [
 ]
 
 const BAR_COLOURS = ["#276749", "#38a169", "#48bb78", "#68d391", "#9ae6b4", "#c6f6d5"]
-
 const YEAR_OPTIONS = Array.from({ length: 43 }, (_, i) => 1980 + i)
 
-// ── Shared config form state ───────────────────────────────────────────────
+// ── Shared config hook ─────────────────────────────────────────────────────
 
 function useModelConfig() {
   const [state, setState] = useState("North Carolina")
@@ -135,12 +154,18 @@ function useModelConfig() {
     enabled: !!state,
   })
 
+  // Fetch model types from registry
+  const { data: modelTypes = [] } = useQuery<ModelTypeInfo[]>({
+    queryKey: ["model-types"],
+    queryFn: () => axios.get("/api/v1/models/types").then((r) => r.data),
+  })
+
   return { state, setState, crop, setCrop, modelType, setModelType,
     startYear, setStartYear, endYear, setEndYear,
-    selectedFeatures, setSelectedFeatures, crops }
+    selectedFeatures, setSelectedFeatures, crops, modelTypes }
 }
 
-// ── Component ──────────────────────────────────────────────────────────────
+// ── Page ───────────────────────────────────────────────────────────────────
 
 function ModelPage() {
   return (
@@ -150,10 +175,12 @@ function ModelPage() {
         <TabList>
           <Tab>Train &amp; Evaluate</Tab>
           <Tab>Predict Yield</Tab>
+          <Tab>Saved Models</Tab>
         </TabList>
         <TabPanels>
           <TabPanel p={0} pt={4}><TrainTab /></TabPanel>
           <TabPanel p={0} pt={4}><PredictTab /></TabPanel>
+          <TabPanel p={0} pt={4}><SavedModelsTab /></TabPanel>
         </TabPanels>
       </Tabs>
     </Stack>
@@ -218,7 +245,20 @@ function TrainTab() {
         </Alert>
       )}
 
-      {result && <TrainResults result={result} />}
+      {result && (
+        <>
+          {result.run_id && (
+            <Alert status="success" borderRadius="md">
+              <AlertIcon />
+              <AlertDescription fontSize="sm">
+                Model saved (run ID: <code>{result.run_id.slice(0, 8)}…</code>).
+                Find it in the <strong>Saved Models</strong> tab.
+              </AlertDescription>
+            </Alert>
+          )}
+          <TrainResults result={result} modelTypes={cfg.modelTypes} />
+        </>
+      )}
     </Stack>
   )
 }
@@ -229,12 +269,10 @@ function PredictTab() {
   const cfg = useModelConfig()
   const [inputValues, setInputValues] = useState<Record<string, string>>({})
 
-  const supportedModels = MODEL_OPTIONS.filter((m) => m.supportsPredict)
-
-  // Default model to first supported one when switching
-  const effectiveModel = supportedModels.find((m) => m.value === cfg.modelType)
+  const supportedModels = cfg.modelTypes.filter((m) => m.supports_predict)
+  const effectiveModel = supportedModels.find((m) => m.key === cfg.modelType)
     ? cfg.modelType
-    : supportedModels[0].value
+    : (supportedModels[0]?.key ?? "random_forest")
 
   const predictMutation = useMutation<PredictResult, { response?: { data?: { detail?: string } } }>({
     mutationFn: () => {
@@ -266,12 +304,11 @@ function PredictTab() {
         <AlertIcon />
         <AlertDescription fontSize="sm">
           The model is trained on historical data for the selected state/crop/years, then applied
-          to the feature values you enter below to produce a single yield prediction.
-          Great for counterfactual questions like "what if temperature were 2 °C higher?".
+          to the feature values you enter below. Great for counterfactual questions.
+          You can also load a pre-trained model from the <strong>Saved Models</strong> tab.
         </AlertDescription>
       </Alert>
 
-      {/* Training scope */}
       <Card>
         <CardHeader><Heading size="md">Training Scope</Heading></CardHeader>
         <CardBody>
@@ -304,19 +341,16 @@ function PredictTab() {
           <FormControl mt={4} maxW="300px">
             <FormLabel>Model Type</FormLabel>
             <Select value={effectiveModel} onChange={(e) => cfg.setModelType(e.target.value)}>
-              {supportedModels.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              {supportedModels.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
             </Select>
           </FormControl>
         </CardBody>
       </Card>
 
-      {/* Feature values */}
       <Card>
         <CardHeader>
           <Heading size="md">Input Feature Values</Heading>
-          <Text fontSize="sm" color="gray.500" mt={1}>
-            Enter the values for the scenario you want to predict. Leave blank to use the training-set mean.
-          </Text>
+          <Text fontSize="sm" color="gray.500" mt={1}>Leave blank to use the training-set mean.</Text>
         </CardHeader>
         <CardBody>
           <SimpleGrid columns={{ base: 2, md: 3 }} spacing={4}>
@@ -337,10 +371,8 @@ function PredictTab() {
       </Card>
 
       <Button
-        colorScheme="green"
-        size="lg"
-        isLoading={predictMutation.isPending}
-        loadingText="Predicting…"
+        colorScheme="green" size="lg"
+        isLoading={predictMutation.isPending} loadingText="Predicting…"
         isDisabled={!cfg.crop}
         onClick={() => predictMutation.mutate()}
         alignSelf="flex-start"
@@ -348,14 +380,10 @@ function PredictTab() {
         Predict Yield
       </Button>
 
-      {!cfg.crop && (
-        <Text color="orange.500" fontSize="sm">⚠️ Select a crop above to enable prediction.</Text>
-      )}
+      {!cfg.crop && <Text color="orange.500" fontSize="sm">⚠️ Select a crop to enable prediction.</Text>}
 
       {predictMutation.isPending && (
-        <Flex justify="center" py={6}>
-          <Spinner size="xl" color="green.500" />
-        </Flex>
+        <Flex justify="center" py={6}><Spinner size="xl" color="green.500" /></Flex>
       )}
 
       {predictMutation.isError && (
@@ -364,34 +392,174 @@ function PredictTab() {
         </Alert>
       )}
 
-      {result && (
+      {result && <PredictResultCard result={result} modelTypes={cfg.modelTypes} />}
+    </Stack>
+  )
+}
+
+// ── Saved Models tab ──────────────────────────────────────────────────────
+
+function SavedModelsTab() {
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const [inputValues, setInputValues] = useState<Record<string, string>>({})
+
+  const { data: runsResp, isLoading } = useQuery({
+    queryKey: ["model-runs"],
+    queryFn: () =>
+      axios.get("/api/v1/models/").then((r) => r.data as { data: ModelRunRecord[]; count: number }),
+  })
+  const runs = runsResp?.data ?? []
+
+  const selectedRun = runs.find((r) => r.run_id === selectedRunId)
+  const selectedFeatures: string[] = selectedRun
+    ? JSON.parse(selectedRun.feature_columns)
+    : []
+
+  const predictMutation = useMutation<PredictResult, { response?: { data?: { detail?: string } } }>({
+    mutationFn: () => {
+      const parsed: Record<string, number> = {}
+      for (const [k, v] of Object.entries(inputValues)) {
+        const n = parseFloat(v)
+        if (!isNaN(n)) parsed[k] = n
+      }
+      return axios
+        .post(`/api/v1/models/${selectedRunId}/predict`, { input_values: parsed })
+        .then((r) => r.data as PredictResult)
+    },
+  })
+
+  return (
+    <Stack spacing={4}>
+      <Alert status="info" borderRadius="md">
+        <AlertIcon />
+        <AlertDescription fontSize="sm">
+          Select a previously trained model and run predictions without retraining.
+          Models are persisted on disk and reloaded on demand.
+        </AlertDescription>
+      </Alert>
+
+      {isLoading ? (
+        <Flex justify="center" py={8}><Spinner color="green.500" /></Flex>
+      ) : runs.length === 0 ? (
+        <Alert status="warning" borderRadius="md">
+          <AlertIcon />
+          <AlertDescription>No saved models yet. Train a model on the <strong>Train &amp; Evaluate</strong> tab first.</AlertDescription>
+        </Alert>
+      ) : (
+        <Card>
+          <CardHeader><Heading size="md">Saved Runs ({runs.length})</Heading></CardHeader>
+          <CardBody overflowX="auto">
+            <Table size="sm">
+              <Thead>
+                <Tr>
+                  <Th>Model</Th>
+                  <Th>Filters</Th>
+                  <Th>R²</Th>
+                  <Th>RMSE</Th>
+                  <Th>Samples</Th>
+                  <Th>Date</Th>
+                  <Th></Th>
+                </Tr>
+              </Thead>
+              <Tbody>
+                {runs.map((run) => {
+                  const filters = JSON.parse(run.filters)
+                  return (
+                    <Tr key={run.run_id} bg={selectedRunId === run.run_id ? "green.50" : undefined}>
+                      <Td><Badge colorScheme="green">{run.model_type}</Badge></Td>
+                      <Td fontSize="xs">{filters.state} · {filters.crop} · {filters.start_year}–{filters.end_year}</Td>
+                      <Td>{run.r2 != null ? (run.r2 * 100).toFixed(1) + "%" : "—"}</Td>
+                      <Td>{run.rmse != null ? run.rmse.toFixed(2) : "—"}</Td>
+                      <Td>{run.n_samples ?? "—"}</Td>
+                      <Td fontSize="xs">{run.created_at.slice(0, 10)}</Td>
+                      <Td>
+                        <Button
+                          size="xs"
+                          colorScheme="green"
+                          variant={selectedRunId === run.run_id ? "solid" : "outline"}
+                          onClick={() => { setSelectedRunId(run.run_id); setInputValues({}) }}
+                        >
+                          {selectedRunId === run.run_id ? "Selected" : "Select"}
+                        </Button>
+                      </Td>
+                    </Tr>
+                  )
+                })}
+              </Tbody>
+            </Table>
+          </CardBody>
+        </Card>
+      )}
+
+      {selectedRun && (
         <Card>
           <CardHeader>
             <Flex align="center" gap={3}>
-              <Heading size="md">Prediction Result</Heading>
-              <Badge colorScheme="green">{MODEL_OPTIONS.find((m) => m.value === result.model_type)?.label}</Badge>
+              <Heading size="md">Predict with {selectedRun.model_type}</Heading>
+              <Badge colorScheme="green">{selectedRun.run_id.slice(0, 8)}…</Badge>
             </Flex>
+            <Text fontSize="xs" color="gray.500" mt={1}>Leave blank to use 0.0 as default.</Text>
           </CardHeader>
           <CardBody>
-            <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
-              <Stat>
-                <StatLabel>Predicted Yield</StatLabel>
-                <StatNumber color="green.600">{result.predicted_yield.toFixed(1)}</StatNumber>
-                <StatHelpText>{result.units}</StatHelpText>
-              </Stat>
-              <Stat>
-                <StatLabel>Training R²</StatLabel>
-                <StatNumber color={result.training_r2 >= 0.7 ? "green.600" : result.training_r2 >= 0.4 ? "orange.500" : "red.500"}>
-                  {(result.training_r2 * 100).toFixed(1)}%
-                </StatNumber>
-                <StatHelpText>model fit on historical data</StatHelpText>
-              </Stat>
-              <Stat>
-                <StatLabel>Training RMSE</StatLabel>
-                <StatNumber>{result.training_rmse.toFixed(2)}</StatNumber>
-                <StatHelpText>bu/acre</StatHelpText>
-              </Stat>
+            <SimpleGrid columns={{ base: 2, md: 3 }} spacing={4}>
+              {selectedFeatures.map((f) => {
+                const meta = ALL_FEATURES.find((x) => x.key === f)
+                return (
+                  <FormControl key={f}>
+                    <FormLabel fontSize="sm">{meta?.label ?? f}</FormLabel>
+                    <Input
+                      type="number"
+                      size="sm"
+                      placeholder="0"
+                      value={inputValues[f] ?? ""}
+                      onChange={(e) => setInputValues((prev) => ({ ...prev, [f]: e.target.value }))}
+                    />
+                  </FormControl>
+                )
+              })}
             </SimpleGrid>
+
+            <Button
+              mt={4}
+              colorScheme="green"
+              isLoading={predictMutation.isPending}
+              loadingText="Predicting…"
+              onClick={() => predictMutation.mutate()}
+            >
+              Predict
+            </Button>
+
+            {predictMutation.isError && (
+              <Alert status="error" mt={3} borderRadius="md">
+                <AlertIcon />
+                <AlertDescription fontSize="sm">
+                  {(predictMutation.error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+                    "Prediction failed."}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {predictMutation.data && (
+              <Box mt={4}>
+                <Divider mb={3} />
+                <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+                  <Stat>
+                    <StatLabel>Predicted Yield</StatLabel>
+                    <StatNumber color="green.600">{predictMutation.data.predicted_yield.toFixed(1)}</StatNumber>
+                    <StatHelpText>{predictMutation.data.units}</StatHelpText>
+                  </Stat>
+                  <Stat>
+                    <StatLabel>Training R²</StatLabel>
+                    <StatNumber>{(predictMutation.data.training_r2 * 100).toFixed(1)}%</StatNumber>
+                  </Stat>
+                  <Stat>
+                    <StatLabel>Training RMSE</StatLabel>
+                    <StatNumber>{predictMutation.data.training_rmse.toFixed(2)}</StatNumber>
+                    <StatHelpText>bu/acre</StatHelpText>
+                  </Stat>
+                </SimpleGrid>
+              </Box>
+            )}
           </CardBody>
         </Card>
       )}
@@ -399,11 +567,12 @@ function PredictTab() {
   )
 }
 
-// ── Shared config form ─────────────────────────────────────────────────────
+// ── Config form ────────────────────────────────────────────────────────────
 
 function ConfigForm({ cfg }: { cfg: ReturnType<typeof useModelConfig> }) {
   const weatherFeatures = ALL_FEATURES.filter((f) => f.group === "Weather")
   const soilFeatures    = ALL_FEATURES.filter((f) => f.group === "Soil")
+  const selectedModelMeta = cfg.modelTypes.find((m) => m.key === cfg.modelType)
 
   return (
     <Card>
@@ -440,31 +609,16 @@ function ConfigForm({ cfg }: { cfg: ReturnType<typeof useModelConfig> }) {
           <FormControl>
             <FormLabel>Model Type</FormLabel>
             <Select value={cfg.modelType} onChange={(e) => cfg.setModelType(e.target.value)} maxW="400px">
-              {MODEL_OPTIONS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              {cfg.modelTypes.map((m) => (
+                <option key={m.key} value={m.key}>{m.label}</option>
+              ))}
             </Select>
           </FormControl>
 
-          {cfg.modelType === "apsimx" && (
+          {selectedModelMeta && (
             <Alert status="info" borderRadius="md">
               <AlertIcon />
-              <AlertDescription fontSize="sm">
-                <strong>ApsimX</strong> is a physics-based crop simulator — it runs full growing-season
-                simulations using daily weather and crop management rules rather than learning from data.
-                Requires daily weather in the DB (use <em>Ingest Daily Weather</em> first).
-                Only <strong>CORN</strong> is currently supported. Simulations may take 1–2 minutes.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {cfg.modelType === "lstm" && (
-            <Alert status="info" borderRadius="md">
-              <AlertIcon />
-              <AlertDescription fontSize="sm">
-                <strong>LSTM</strong> (Long Short-Term Memory) is a recurrent neural network that learns
-                from sequences of annual features (e.g., 3-year weather patterns) to predict yield.
-                It captures multi-year carry-over effects that tree models miss.
-                Requires at least 3 years of data per county. Training takes ~30 seconds.
-              </AlertDescription>
+              <AlertDescription fontSize="sm">{selectedModelMeta.description}</AlertDescription>
             </Alert>
           )}
 
@@ -504,19 +658,17 @@ function ConfigForm({ cfg }: { cfg: ReturnType<typeof useModelConfig> }) {
 
 // ── Train results panel ────────────────────────────────────────────────────
 
-function TrainResults({ result }: { result: TrainResult }) {
+function TrainResults({ result, modelTypes }: { result: TrainResult; modelTypes: ModelTypeInfo[] }) {
+  const modelLabel = modelTypes.find((m) => m.key === result.model_type)?.label ?? result.model_type
+
   return (
     <Stack spacing={4}>
       <Card>
         <CardHeader>
           <Flex align="center" gap={3}>
             <Heading size="md">Results</Heading>
-            <Badge colorScheme="green" fontSize="sm">
-              {MODEL_OPTIONS.find((m) => m.value === result.model_type)?.label}
-            </Badge>
-            <Badge colorScheme="blue" fontSize="sm">
-              {result.crop} · {result.state}
-            </Badge>
+            <Badge colorScheme="green" fontSize="sm">{modelLabel}</Badge>
+            <Badge colorScheme="blue" fontSize="sm">{result.crop} · {result.state}</Badge>
           </Flex>
         </CardHeader>
         <CardBody>
@@ -526,7 +678,7 @@ function TrainResults({ result }: { result: TrainResult }) {
               <StatNumber color={result.r2 >= 0.7 ? "green.600" : result.r2 >= 0.4 ? "orange.500" : "red.500"}>
                 {(result.r2 * 100).toFixed(1)}%
               </StatNumber>
-              <StatHelpText>{result.r2 >= 0.7 ? "Good fit" : result.r2 >= 0.4 ? "Moderate fit" : "Poor fit"}</StatHelpText>
+              <StatHelpText>{result.r2 >= 0.7 ? "Good fit" : result.r2 >= 0.4 ? "Moderate" : "Poor fit"}</StatHelpText>
             </Stat>
             <Stat>
               <StatLabel>RMSE</StatLabel>
@@ -540,8 +692,8 @@ function TrainResults({ result }: { result: TrainResult }) {
             </Stat>
             <Stat>
               <StatLabel>Test rows</StatLabel>
-              <StatNumber>{result.model_type === "apsimx" ? "N/A" : result.n_test}</StatNumber>
-              <StatHelpText>{result.model_type === "apsimx" ? "simulator, no split" : "held out"}</StatHelpText>
+              <StatNumber>{result.n_test}</StatNumber>
+              <StatHelpText>held out</StatHelpText>
             </Stat>
           </SimpleGrid>
         </CardBody>
@@ -549,31 +701,10 @@ function TrainResults({ result }: { result: TrainResult }) {
 
       <Card>
         <CardHeader>
-          <Heading size="md">
-            {result.model_type === "apsimx" ? "Simulation Summary" : "Feature Importances"}
-          </Heading>
-          <Text fontSize="sm" color="gray.500" mt={1}>
-            {result.model_type === "apsimx"
-              ? "Key statistics from the ApsimX physics-based simulation run."
-              : result.model_type === "lstm"
-              ? "Approximate feature importance estimated via input-gradient magnitude."
-              : "Which variables had the most influence on the prediction?"}
-          </Text>
+          <Heading size="md">Feature Importances</Heading>
         </CardHeader>
         <CardBody>
-          {result.model_type === "apsimx" ? (
-            <SimpleGrid columns={{ base: 2, md: 4 }} spacing={4}>
-              {result.feature_importances.map((fi) => (
-                <Stat key={fi.feature}>
-                  <StatLabel fontSize="xs">{fi.feature.replace(/_/g, " ")}</StatLabel>
-                  <StatNumber fontSize="lg">
-                    {fi.importance.toFixed(fi.feature.includes("counties") || fi.feature.includes("matched") ? 0 : 1)}
-                  </StatNumber>
-                </Stat>
-              ))}
-            </SimpleGrid>
-          ) : (
-            <ResponsiveContainer width="100%" height={260}>
+          <ResponsiveContainer width="100%" height={260}>
               <BarChart
                 data={result.feature_importances}
                 layout="vertical"
@@ -597,9 +728,46 @@ function TrainResults({ result }: { result: TrainResult }) {
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
-          )}
         </CardBody>
       </Card>
     </Stack>
+  )
+}
+
+// ── Predict result card ────────────────────────────────────────────────────
+
+function PredictResultCard({ result, modelTypes }: { result: PredictResult; modelTypes: ModelTypeInfo[] }) {
+  return (
+    <Card>
+      <CardHeader>
+        <Flex align="center" gap={3}>
+          <Heading size="md">Prediction Result</Heading>
+          <Badge colorScheme="green">
+            {modelTypes.find((m) => m.key === result.model_type)?.label ?? result.model_type}
+          </Badge>
+        </Flex>
+      </CardHeader>
+      <CardBody>
+        <SimpleGrid columns={{ base: 1, md: 3 }} spacing={4}>
+          <Stat>
+            <StatLabel>Predicted Yield</StatLabel>
+            <StatNumber color="green.600">{result.predicted_yield.toFixed(1)}</StatNumber>
+            <StatHelpText>{result.units}</StatHelpText>
+          </Stat>
+          <Stat>
+            <StatLabel>Training R²</StatLabel>
+            <StatNumber color={result.training_r2 >= 0.7 ? "green.600" : result.training_r2 >= 0.4 ? "orange.500" : "red.500"}>
+              {(result.training_r2 * 100).toFixed(1)}%
+            </StatNumber>
+            <StatHelpText>model fit</StatHelpText>
+          </Stat>
+          <Stat>
+            <StatLabel>Training RMSE</StatLabel>
+            <StatNumber>{result.training_rmse.toFixed(2)}</StatNumber>
+            <StatHelpText>bu/acre</StatHelpText>
+          </Stat>
+        </SimpleGrid>
+      </CardBody>
+    </Card>
   )
 }

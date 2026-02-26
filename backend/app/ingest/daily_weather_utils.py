@@ -1,9 +1,9 @@
 """
 Daily weather DB utilities for MLPlayground.
 
-Provides the helper functions used by climate_nldas to persist Daymet daily
+Provides the helper functions used by weather_daymet to persist Daymet daily
 weather into the ``daily_weather`` table.  All data is sourced from the
-Daymet API via climate_nldas — no CSV files are used anywhere.
+Daymet API via weather_daymet — no CSV files are used anywhere.
 
 Key helpers:
   _fill_leap_days(df)              — fills missing Dec 31 in Daymet leap years
@@ -17,7 +17,7 @@ import pandas as pd
 from sqlmodel import Session, select
 
 from app.core.db import engine
-from app.models import DailyWeather
+from app.db_models import DailyWeather
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def _fill_leap_days(df: pd.DataFrame) -> pd.DataFrame:
     """
     Daymet provides exactly 365 rows per year, omitting Dec 31 in leap years.
     Inserts a synthetic day 366 row (copy of day 365, precipitation = 0) so
-    every year has a complete consecutive date sequence that ApsimX requires.
+    every year has a complete consecutive date sequence.
     """
     filled: list[pd.DataFrame] = []
     for year, grp in df.groupby("Year"):

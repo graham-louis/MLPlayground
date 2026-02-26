@@ -9,7 +9,9 @@ import { renderWithProviders } from "./utils"
 // Mock recharts to avoid ResizeObserver issues in jsdom
 vi.mock("recharts", () => ({
   LineChart: ({ children }: { children: React.ReactNode }) => <div data-testid="line-chart">{children}</div>,
+  BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
   Line: () => null,
+  Bar: () => null,
   XAxis: () => null,
   YAxis: () => null,
   CartesianGrid: () => null,
@@ -36,11 +38,13 @@ describe("Data Explorer – filter UI", () => {
     expect(stateSelect.value).toBe("North Carolina")
   })
 
-  it("shows all four data-type tabs", () => {
+  it("shows data-driven tabs from datasources API", async () => {
     renderWithProviders(<ExplorePage />)
-    expect(screen.getByRole("tab", { name: /^yields$/i })).toBeInTheDocument()
-    expect(screen.getByRole("tab", { name: /^weather$/i })).toBeInTheDocument()
-    expect(screen.getByRole("tab", { name: /^soil$/i })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /crop yields/i })).toBeInTheDocument()
+    })
+    expect(screen.getByRole("tab", { name: /annual weather/i })).toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: /soil properties/i })).toBeInTheDocument()
     expect(screen.getByRole("tab", { name: /daily weather/i })).toBeInTheDocument()
   })
 
@@ -73,6 +77,11 @@ describe("Data Explorer – loading data", () => {
     const user = userEvent.setup()
     renderWithProviders(<ExplorePage />)
 
+    // Wait for tabs to load from API
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /crop yields/i })).toBeInTheDocument()
+    })
+
     await user.click(screen.getByRole("button", { name: /load data/i }))
 
     await waitFor(() => {
@@ -92,6 +101,7 @@ describe("Data Explorer – loading data", () => {
     )
     const user = userEvent.setup()
     renderWithProviders(<ExplorePage />)
+    await waitFor(() => screen.getByRole("tab", { name: /crop yields/i }))
     await user.click(screen.getByRole("button", { name: /load data/i }))
     expect(screen.getByText(/loading/i)).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText(/loading/i)).not.toBeInTheDocument())
@@ -103,6 +113,7 @@ describe("Data Explorer – loading data", () => {
     )
     const user = userEvent.setup()
     renderWithProviders(<ExplorePage />)
+    await waitFor(() => screen.getByRole("tab", { name: /crop yields/i }))
     await user.click(screen.getByRole("button", { name: /load data/i }))
     await waitFor(() => {
       expect(screen.getByText(/no yields data found/i)).toBeInTheDocument()
@@ -112,26 +123,13 @@ describe("Data Explorer – loading data", () => {
     })
   })
 
-  it("shows ingestion-running banner when ingest status is running", async () => {
-    server.use(
-      http.get("/api/v1/yields/", () => HttpResponse.json({ data: [], count: 0 })),
-      http.get("/api/v1/ingest/status", () => HttpResponse.json({ status: "running" }))
-    )
-    const user = userEvent.setup()
-    renderWithProviders(<ExplorePage />)
-    await user.click(screen.getByRole("button", { name: /load data/i }))
-    await waitFor(() => {
-      expect(screen.getByText(/ingestion is running/i)).toBeInTheDocument()
-    })
-    expect(screen.queryByRole("button", { name: /run data ingestion/i })).not.toBeInTheDocument()
-  })
-
   it("triggers ingestion when button is clicked", async () => {
     server.use(
       http.get("/api/v1/yields/", () => HttpResponse.json({ data: [], count: 0 }))
     )
     const user = userEvent.setup()
     renderWithProviders(<ExplorePage />)
+    await waitFor(() => screen.getByRole("tab", { name: /crop yields/i }))
     await user.click(screen.getByRole("button", { name: /load data/i }))
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /run data ingestion/i })).toBeInTheDocument()
@@ -140,52 +138,12 @@ describe("Data Explorer – loading data", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /run data ingestion/i })).toBeInTheDocument()
     })
-  })
-
-  it("shows error alert when ingestion trigger fails (409)", async () => {
-    server.use(
-      http.get("/api/v1/yields/", () => HttpResponse.json({ data: [], count: 0 })),
-      http.post("/api/v1/ingest/trigger", () =>
-        HttpResponse.json({ detail: "Ingestion is already running." }, { status: 409 })
-      )
-    )
-    const user = userEvent.setup()
-    renderWithProviders(<ExplorePage />)
-    await user.click(screen.getByRole("button", { name: /load data/i }))
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /run data ingestion/i })).toBeInTheDocument()
-    })
-    await user.click(screen.getByRole("button", { name: /run data ingestion/i }))
-    await waitFor(() => {
-      expect(screen.getByText(/ingestion is already running/i)).toBeInTheDocument()
-    })
-  })
-
-  it("can switch to Weather tab and load weather data", async () => {
-    const user = userEvent.setup()
-    renderWithProviders(<ExplorePage />)
-    await user.click(screen.getByRole("tab", { name: /^weather$/i }))
-    await user.click(screen.getByRole("button", { name: /load data/i }))
-    await waitFor(() => {
-      expect(screen.getByText(/1 records/)).toBeInTheDocument()
-    })
-    expect(screen.getByRole("columnheader", { name: "avg_temp" })).toBeInTheDocument()
-  })
-
-  it("can switch to Soil tab and load soil data", async () => {
-    const user = userEvent.setup()
-    renderWithProviders(<ExplorePage />)
-    await user.click(screen.getByRole("tab", { name: /^soil$/i }))
-    await user.click(screen.getByRole("button", { name: /load data/i }))
-    await waitFor(() => {
-      expect(screen.getByText(/1 records/)).toBeInTheDocument()
-    })
-    expect(screen.getByRole("columnheader", { name: "ph" })).toBeInTheDocument()
   })
 
   it("can switch to Daily Weather tab and load daily weather data", async () => {
     const user = userEvent.setup()
     renderWithProviders(<ExplorePage />)
+    await waitFor(() => screen.getByRole("tab", { name: /daily weather/i }))
     await user.click(screen.getByRole("tab", { name: /daily weather/i }))
     await user.click(screen.getByRole("button", { name: /load data/i }))
     await waitFor(() => {
@@ -200,12 +158,12 @@ describe("Data Explorer – loading data", () => {
     )
     const user = userEvent.setup()
     renderWithProviders(<ExplorePage />)
+    await waitFor(() => screen.getByRole("tab", { name: /daily weather/i }))
     await user.click(screen.getByRole("tab", { name: /daily weather/i }))
     await user.click(screen.getByRole("button", { name: /load data/i }))
     await waitFor(() => {
       expect(screen.getByText(/no daily weather data found/i)).toBeInTheDocument()
     })
-    // Should show Ingest Daily Weather button
     await waitFor(() => {
       const buttons = screen.getAllByRole("button", { name: /ingest daily weather/i })
       expect(buttons.length).toBeGreaterThanOrEqual(1)

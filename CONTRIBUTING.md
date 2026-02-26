@@ -10,17 +10,18 @@ This guide explains how to add a new **data source** or **machine-learning model
 
 A "data source" is any external dataset you want to fetch and store — for example, satellite NDVI imagery, drought indices, pest-pressure scores, or market prices.
 
-MLPlayground uses a **5-file pattern** for each data source:
+MLPlayground uses a **6-step pattern** for each data source:
 
-| File | What it does | Do I need to change it? |
+| Step | File | What it does |
 |---|---|---|
-| `backend/app/ingest/your_source.py` | Fetches and cleans the data | **Yes — create this file** |
-| `backend/app/models.py` | Defines the database table | **Yes — add ~15 lines** |
-| `backend/app/api/routes/your_source.py` | Exposes the data as a REST endpoint | **Yes — copy an existing one** |
-| `backend/app/api/main.py` | Wires the endpoint into the app | **Yes — add 2 lines** |
-| `backend/app/ingest/runner.py` | Runs ingestion for all counties | **Yes — add ~5 lines** |
+| 1 | `backend/app/ingest/your_source.py` | Fetch + clean the data; register with the datasource registry |
+| 2 | `backend/app/db_models.py` | Define the database table (~15 lines) |
+| 3 | Alembic migration | Create the table automatically |
+| 4 | `backend/app/api/routes/your_source.py` | Expose the data as a REST endpoint |
+| 5 | `backend/app/api/main.py` | Wire the endpoint into the app (2 lines) |
+| 6 | `backend/app/ingest/runner.py` | Call your fetcher during ingestion |
 
-### Step 1 — Write the ingest script
+### Step 1 — Write the ingest script and register it
 
 Copy the template file and rename it:
 
@@ -28,37 +29,35 @@ Copy the template file and rename it:
 cp backend/app/ingest/template_datasource.py backend/app/ingest/my_source.py
 ```
 
-Open your new file and work through every `# TODO` comment. The key function to implement is:
+Open your new file and work through every `# TODO` comment. Set `DATASOURCE_NAME`, `DATASOURCE_COLUMNS`, and `SCOPE_PARAMS`, then implement `fetch_data(**scope) -> pd.DataFrame`.
+
+At the bottom of the file, register with the datasource registry:
 
 ```python
-def fetch_and_transform(county_name, state_name, start_year, end_year) -> pd.DataFrame:
-    ...
+DATASOURCE_REGISTRY.register(
+    key=DATASOURCE_NAME,
+    label="My Source",
+    endpoint="/api/v1/my_source/",
+    columns=DATASOURCE_COLUMNS,
+    scope_params=SCOPE_PARAMS,
+)
 ```
 
-It must return a pandas DataFrame with at least these columns:
-
-| Column | Type | Description |
-|---|---|---|
-| `year` | int | The year of the observation |
-| `county` | str | County name (must match what was passed in) |
-| `state` | str | State name (must match what was passed in) |
-| `source` | str | Short name of your datasource |
-| *(your columns)* | float | Your domain-specific measurements |
+This registration drives the Explore tab, the Ingest scope form, and the Model feature picker — **all automatically, with zero frontend changes**.
 
 ### Step 2 — Add a database model
 
-Open `backend/app/models.py` and add a new block at the bottom (copy the `Weather` block as a template and rename it):
+Open `backend/app/db_models.py` and add a new block at the bottom (copy the `Weather` block as a template):
 
 ```python
-# --- My New Source Models ---
 class MySourceBase(SQLModel):
     year: int
     state: str
     county: str
-    my_metric: Optional[float] = None    # add your columns here
+    my_metric: Optional[float] = None
 
 class MySource(MySourceBase, table=True):
-    __tablename__ = "my_source"          # must be lowercase, no spaces
+    __tablename__ = "my_source"
     id: Optional[int] = Field(default=None, primary_key=True)
 
 class MySourcePublic(MySourceBase):
@@ -71,177 +70,80 @@ class MySourcesPublic(SQLModel):
 
 ### Step 3 — Run the database migration
 
-This creates the new table automatically. Run these two commands from your terminal (Docker must be running):
-
 ```bash
 docker compose exec backend alembic revision --autogenerate -m "Add my_source table"
 docker compose exec backend alembic upgrade head
 ```
 
-If you see `INFO  [alembic.runtime.migration] Running upgrade` — you're done.
-
 ### Step 4 — Add an API route
-
-Copy an existing route file:
 
 ```bash
 cp backend/app/api/routes/weather.py backend/app/api/routes/my_source.py
 ```
 
-Open `my_source.py` and replace every occurrence of `Weather` / `weather` / `WeathersPublic` with your model names. Adjust the query filters to match your columns.
+Replace every occurrence of `Weather` / `weather` with your model names and adjust the query filters to match your columns.
 
-Then open `backend/app/api/main.py` and add two lines (follow the existing pattern):
+### Step 5 — Wire the route into the app
 
-```python
-from app.api.routes import my_source   # add to imports at top
-api_router.include_router(my_source.router)   # add after the other include_router calls
-```
-
-### Step 5 — Register in the runner
-
-Open `backend/app/ingest/runner.py`.
-
-At the top, add an import:
+Open `backend/app/api/main.py` and add two lines:
 
 ```python
-from app.ingest.my_source import fetch_and_transform as fetch_my_source
+from app.api.routes import my_source
+api_router.include_router(my_source.router)
 ```
 
-Inside the `main()` function, add a upsert function (copy `upsert_weather_to_db` as a template) and call it inside the per-county loop:
+### Step 6 — Call the fetcher from the runner
 
-```python
-try:
-    my_df = fetch_my_source(county, state, start_year, end_year)
-    upsert_my_source_to_db(my_df)
-except Exception as exc:
-    logger.error("MySource ingestion failed for %s, %s: %s", county, state, exc)
-```
+Open `backend/app/ingest/runner.py` and add your fetcher to the per-source dispatch section (follow the existing pattern for `yields_nass`, `weather_daymet`, etc.).
 
-### Step 6 — Test it
+### Test it
 
 ```bash
-# Start everything
 docker compose up --build
 
-# Trigger ingestion for one county to test
-curl -X POST http://localhost:8000/api/v1/ingest/trigger
+# Trigger ingestion for your new source
+curl -X POST http://localhost:8000/api/v1/ingest/run \
+  -H "Content-Type: application/json" \
+  -d '{"sources": ["my_source"], "scope": {"states": ["North Carolina"], "start_year": 2010, "end_year": 2022}}'
 
 # Check your new endpoint
 curl "http://localhost:8000/api/v1/my_source/?state=North+Carolina"
 ```
 
-The interactive API docs at `http://localhost:8000/docs` will show your new endpoint automatically.
+The Explore page will have a new tab and the interactive API docs at `http://localhost:8000/docs` will list your new endpoint — all automatically.
 
 ---
 
 ## Adding a New Model Type
 
-Models live in `backend/app/api/routes/models.py`. Adding a new scikit-learn model takes **three steps**:
+Models live in `backend/app/api/routes/training.py`. The frontend discovers model types from `/api/v1/models/types` — **never hardcode model names in React**.
 
-### Step 1 — Add the model to the map
-
-Open `backend/app/api/routes/models.py` and find `model_map`:
+### Step 1 — Add to `MODEL_REGISTRY` and `MODEL_TYPES`
 
 ```python
-model_map = {
-    "linear_regression":  LinearRegression(),
-    "random_forest":      RandomForestRegressor(...),
-    "gradient_boosting":  GradientBoostingRegressor(...),
-    # Add your model here:
-    "my_new_model":       MyModelClass(param1=..., param2=...),
+MODEL_TYPES = Literal["linear_regression", "random_forest", "gradient_boosting", "lstm", "my_new_model"]
+
+MODEL_REGISTRY = {
+    ...
+    "my_new_model": {"label": "My New Model", "kind": "sklearn", "description": "...", "supports_predict": True},
 }
 ```
 
-### Step 2 — Update the type hint
+### Step 2 — Add a training branch
 
-In the same file, update `MODEL_TYPES`:
+In the `train_model` endpoint, add:
 
 ```python
-MODEL_TYPES = Literal["linear_regression", "random_forest", "gradient_boosting", "my_new_model"]
+elif req.model_type == "my_new_model":
+    model = MyModelClass(...)
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    r2 = r2_score(y_test, y_pred)
+    rmse = mean_squared_error(y_test, y_pred, squared=False)
+    importances = model.feature_importances_  # or coef_
 ```
 
-### Step 3 — Add it to the frontend dropdown
-
-Open `frontend/src/routes/model.tsx` and add your model to `MODEL_OPTIONS`:
-
-```typescript
-const MODEL_OPTIONS = [
-  { value: "random_forest",     label: "Random Forest" },
-  { value: "gradient_boosting", label: "Gradient Boosting" },
-  { value: "linear_regression", label: "Linear Regression" },
-  { value: "my_new_model",      label: "My New Model" },  // ← add this
-]
-```
-
-That's it. The training form, results display, and feature importance chart will all work automatically.
-
----
-
-## Adding a Process-Based Simulator (e.g. ApsimX, DSSAT)
-
-Process-based simulators are **not** scikit-learn models — they run as external programs and consume weather/soil files. The pattern used by ApsimX is the "subprocess adapter" and lives in `backend/app/ingest/apsimx_runner.py`. Use it as your template.
-
-### How the ApsimX adapter works
-
-```
-DB (DailyWeather + Soil tables)
-       ↓
-apsimx_runner.py
-  1. Query DailyWeather → generate .met weather file
-  2. Query Soil → patch soil properties in .apsimx template JSON
-  3. Patch Clock dates and crop sowing parameters
-  4. subprocess.run([APSIMX_BIN, "run", "simulation.apsimx"])
-  5. Read output SQLite .db → yield DataFrame
-       ↓
-models.py route → compare to observed USDA NASS yields → return R²/RMSE
-```
-
-### Prerequisites before running ApsimX
-
-1. **Build the binary** (one-time, ~60 seconds):
-   ```bash
-   bash scripts/install_apsimx.sh
-   ```
-2. **Set the environment variable** in `.env`:
-   ```
-   APSIMX_BIN=/tmp/apsim_bin/apsim
-   ```
-3. **Load daily weather into the database** (one-time per dataset):
-   ```bash
-   # Inside the running container:
-   docker compose exec backend python -m app.ingest.climate_daily
-   # Or via the API:
-   curl -X POST http://localhost:8000/api/v1/ingest/trigger-daily-weather
-   ```
-
-### Adding a new simulator (e.g. DSSAT)
-
-Follow the same pattern as `apsimx_runner.py`:
-
-| Step | What to do |
-|---|---|
-| 1 | Create `backend/app/ingest/dssat_runner.py` |
-| 2 | Write a `generate_weather_file_from_db()` function that converts DailyWeather rows to your simulator's format |
-| 3 | Write a `build_input_file()` function that patches the simulator's config template |
-| 4 | Write a `run_simulator()` function using `subprocess.run()` |
-| 5 | Write a `simulate_yields()` public entry point (matching the ApsimX signature) |
-| 6 | Add a `"dssat"` entry to `MODEL_TYPES`, `model_map` branch, and `_run_apsimx_model`-equivalent in `models.py` |
-| 7 | Add `"dssat"` to `MODEL_OPTIONS` in `frontend/src/routes/model.tsx` |
-
-**Key differences from a scikit-learn model:**
-- No `fit()` / `predict()` — the simulator runs as a subprocess
-- No train/test split — R² and RMSE compare simulation output vs observed data
-- Feature importances are replaced by simulation summary statistics
-- Data must be in the DB *before* running (trigger daily weather ingest first)
-
-### Data source requirements
-
-| Simulator input | MLPlayground source | Table / endpoint |
-|---|---|---|
-| Daily weather (.met, .wth, etc.) | Daymet via NLDAS | `daily_weather` table |
-| Soil physical properties | SSURGO via NRCS | `soil` table |
-| Crop management rules | Hard-coded per crop in `CROP_CONFIG` dict | `apsimx_runner.py` |
-| Observed yields (for validation) | USDA NASS QuickStats | `yields` table |
+The platform handles the data join, train/test split, serialization to `artifacts/models/`, and the `model_runs` DB record — you only implement the fit/predict logic.
 
 ---
 
@@ -250,14 +152,13 @@ Follow the same pattern as `apsimx_runner.py`:
 | Task | Difficulty | Notes |
 |---|---|---|
 | Writing a fetch function | ★★☆☆☆ | Template + examples make this straightforward |
+| Registering with DATASOURCE_REGISTRY | ★☆☆☆☆ | Four lines; pattern matches template exactly |
 | Adding a database model | ★★★☆☆ | Copy-paste pattern; ORM syntax may be unfamiliar |
 | Running migrations | ★☆☆☆☆ | Two commands; hard to get wrong |
 | Copying a route file | ★★☆☆☆ | Find-and-replace task |
-| Registering in runner.py | ★★☆☆☆ | Three lines; template shows exact pattern |
-| Adding a model type | ★★☆☆☆ | One dict entry + one type update |
-| Editing the frontend dropdown | ★☆☆☆☆ | One line; no TypeScript knowledge required |
+| Adding a model type | ★★☆☆☆ | One dict entry + one elif branch |
 
-**Overall**: A researcher comfortable with Python can add a new data source in ~1 hour without understanding the full stack.
+**Overall:** A researcher comfortable with Python can add a new data source in ~1 hour without understanding the full stack.
 
 ---
 

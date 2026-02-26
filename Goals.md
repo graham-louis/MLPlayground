@@ -19,11 +19,11 @@ The platform is **entirely domain-agnostic**. It ships with a concrete example d
 ```
 backend/app/
   main.py                  # FastAPI app entry point
-  models.py                # SQLModel table definitions for the bundled example domain
+  db_models.py            # SQLModel table definitions for the bundled example domain
   api/
     main.py                # Registers all routers onto api_router
     routes/
-      models.py            # POST /api/v1/models/train  POST /api/v1/models/predict
+      training.py         # POST /api/v1/models/train  POST /api/v1/models/predict
       ingest.py            # POST /api/v1/ingest/run  GET /api/v1/ingest/status/{job_id}
       datasources.py       # GET /api/v1/datasources/  (registry metadata — to be built)
       utils.py             # GET /api/v1/utils/health-check/
@@ -40,8 +40,8 @@ backend/app/
     registry.py            # Central registry all datasource modules register into (to be built)
     template_datasource.py # Copy-paste template for new sources
     # --- example domain ingest modules (illustrate the pattern) ---
-    crop_nass.py           # USDA NASS yield fetcher
-    climate_nldas.py       # NASA NLDAS weather fetcher (annual + daily)
+    yields_nass.py           # USDA NASS yield fetcher
+    weather_daymet.py       # NASA NLDAS weather fetcher (annual + daily)
     soil_ssurgo.py         # USDA SSURGO soil fetcher
   alembic/
     versions/
@@ -117,84 +117,71 @@ The response `TrainResult` (r2, rmse, feature_importances, n_samples) is already
 2. **Frontend tabs are data-driven.** The Explore page reads `DATA_TABS` and the Model page reads `AVAILABLE_FEATURES` from the API. Do not hardcode new sources into React — expose a `/api/v1/datasources/` metadata endpoint and drive the UI from it.
 3. **All DB access through the ORM.** No raw SQL in routes. Use `sqlmodel.select` + the `get_session` dependency.
 4. **Alembic for every schema change.** Create a new version file under `backend/app/alembic/versions/` for any model addition or column change.
-5. **Pydantic schemas for every request/response.** Define `XBase`, `X` (table=True), `XPublic`, `XsPublic` pattern as in `models.py`.
+5. **Pydantic schemas for every request/response.** Define `XBase`, `X` (table=True), `XPublic`, `XsPublic` pattern as in `db_models.py`.
 6. **TypeScript strict mode on the frontend.** No `any` unless absolutely unavoidable.
 
 ---
 
 ## Planned Features (priority order)
 
-### 1. Dynamic datasource registry (HIGH)
+### ✅ 1. Dynamic datasource registry (DONE)
 **Goal:** Make the Explore page fully data-driven so adding a new ingest module automatically adds a tab.
 
-**What to build:**
-- Backend: `/api/v1/datasources/` endpoint that returns a list of `{ key, label, endpoint, columns }` objects, one per registered datasource.
-- Backend: A `DATASOURCE_REGISTRY` dict in `backend/app/ingest/runner.py` (or a new `registry.py`) that each ingest module registers itself into.
-- Frontend: Replace the hardcoded `DATA_TABS` array in `explore.tsx` with a `useQuery` call to `/api/v1/datasources/`. Render one `<Tab>` per entry.
-
-**Acceptance criteria:**
-- Adding a new file to `backend/app/ingest/` that follows `template_datasource.py` and calls `DATASOURCE_REGISTRY.register(...)` causes a new tab to appear in the Explore page with zero frontend changes.
+**Built:**
+- `backend/app/ingest/registry.py` — `DATASOURCE_REGISTRY` singleton; each ingest module registers itself at import time.
+- `GET /api/v1/datasources/` endpoint returns `{ key, label, endpoint, columns, scope_params }` per source.
+- `explore.tsx` fetches datasources from the API and renders one `<Tab>` per entry — zero frontend changes needed when a new source is added.
 
 ---
 
-### 2. Ingestion scope UI (HIGH)
-**Goal:** Let users trigger ingestion for any combination of datasources and scope parameters, entirely driven by what the datasource registry declares — not hardcoded to any domain's dimensions.
+### ✅ 2. Ingestion scope UI (DONE)
+**Goal:** Let users trigger ingestion for any combination of datasources and scope parameters, driven by the registry.
 
-**What to build:**
-- Backend: Each registered datasource declares its own `scope_params` — an ordered list of filter dimensions (e.g. `["state", "year_range"]` for the agriculture domain, or `["ticker", "date_range"]` for a financial domain). These are returned by `/api/v1/datasources/` alongside the datasource metadata.
-- Frontend: An "Ingest" page at `/ingest` (`frontend/src/routes/ingest.tsx`) that:
-  - Fetches the datasource list from `/api/v1/datasources/`.
-  - Renders a multi-select for datasources.
-  - For the selected datasources, renders whatever scope param inputs the registry declares (text field, date range, multi-select, etc.) — not a hardcoded state/county form.
-  - Sends `POST /api/v1/ingest/run` with `{ sources: [...], scope: { ...paramValues } }` and displays live progress by polling `GET /api/v1/ingest/status/{job_id}`.
-- Backend: `POST /api/v1/ingest/run` accepts the generic `{ sources, scope }` body, dispatches each source's `fetch_data(**scope)` in a `BackgroundTask`, and returns `{ job_id }`. Add `GET /api/v1/ingest/status/{job_id}` returning `{ job_id, status, progress, errors }`.
+**Built:**
+- Each datasource declares `scope_params` in the registry.
+- `frontend/src/routes/ingest.tsx` — multi-select for sources, dynamic scope param form, live job polling.
+- `POST /api/v1/ingest/run` + `GET /api/v1/ingest/status/{job_id}` — background job dispatch and polling.
 
 ---
 
-### 3. Model persistence + saved-run gallery (HIGH)
-**Goal:** Trained models should be saved to disk and reloadable for inference without retraining.
+### ✅ 3. Model persistence + saved-run gallery (DONE)
+**Goal:** Trained models saved to disk and reloadable for inference without retraining.
 
-**What to build:**
-- Backend: After training, serialize the sklearn model to `artifacts/models/{run_id}.pkl` using `joblib`. Store run metadata in a new `model_runs` DB table.
-- Backend: `GET /api/v1/models/` — list all saved runs.
-- Backend: `POST /api/v1/models/{run_id}/predict` — load the saved model and run inference against a caller-supplied feature dict.
-- Frontend: Add a "Saved Models" tab in `model.tsx` that lists runs and allows selecting one for prediction without retraining.
-
-**Alembic migration required:** Add `model_runs` table. Schema must be domain-agnostic:
-```
-id, run_id (uuid), model_type, datasources (JSON list), join_keys (JSON list),
-feature_columns (JSON list), target_column, filters (JSON), r2, rmse,
-n_samples, artifact_path, created_at
-```
-No domain-specific columns (e.g. no `state`, `crop`) — those values live inside the `filters` JSON blob.
+**Built:**
+- Models serialized to `artifacts/models/{run_id}.pkl` via `joblib`.
+- `model_runs` DB table stores run metadata (Alembic migration `003_add_model_runs`).
+- `GET /api/v1/models/` — lists all saved runs.
+- `POST /api/v1/models/predict` — loads saved model and runs inference.
+- "Saved Models" tab in `model.tsx` — lists runs and allows prediction without retraining.
 
 ---
 
-### 4. LSTM / time-series model support (MEDIUM)
-**Goal:** Add an LSTM model type to the train endpoint that treats each unique combination of `join_key` values as a time series.
+### ✅ 4. LSTM / time-series model support (DONE)
+**Goal:** Add an LSTM model type that treats each county as a time series.
 
-**What to build:**
-- Backend: Implement `model_type = "lstm"` branch in `backend/app/api/routes/models.py`. Group rows by the non-temporal join keys and sort by the time dimension (whichever `join_key` is of type int/date). Use PyTorch or Keras. Sequence length = configurable via `TrainRequest` (default 5 steps). Return the same `TrainResult` schema.
-- Frontend: No changes needed — the model type dropdown already includes "lstm" as an option.
-
----
-
-### 5. Domain-specific simulation plugin support (MEDIUM)
-**Goal:** Allow process-based simulation models (not just data-driven ML) to be registered as prediction backends. APSIM-X is the reference implementation for the agriculture example domain.
-
-**What to build:**
-- Backend: Define a `SimulationPlugin` interface in `backend/app/api/routes/models.py` with a single method: `predict(inputs: dict) -> dict`. Any simulation tool (APSIM, SWAT, OpenFOAM, etc.) is wrapped in a class implementing this interface and registered by name.
-- Backend: `backend/app/ingest/apsimx_runner.py` already has scaffolding. Complete it as the reference `SimulationPlugin` implementation: accepts a generic input dict, fills the `.apsimx` template, runs the CLI, parses the output `.db`, returns `{ predicted_value, units, metadata }`.
-- Backend: In `POST /api/v1/models/predict`, when `model_type` matches a registered `SimulationPlugin` name, route to the plugin instead of loading a `.pkl` artifact.
-- Frontend: When a simulation plugin model type is selected, hide the "Train" step (simulation models don't require training) and render only the prediction input form. Input fields should be driven by a `GET /api/v1/models/types/{model_type}/input-schema` endpoint.
+**Built:**
+- `model_type = "lstm"` branch in `training.py` — PyTorch LSTM, groups by county, sliding window sequences.
+- Sequence length configurable via `TrainRequest`.
+- Returns the same `TrainResult` schema as sklearn models.
+- Frontend discovers it via `GET /api/v1/models/types` — no hardcoded changes needed.
 
 ---
 
-### 6. Column-level stats and charting (LOW)
-**Goal:** On the Explore page, clicking a numeric column header opens a histogram or time-series chart for that column.
+### ✅ 5. Column-level stats and charting (DONE)
+**Goal:** Clicking a numeric column in the Explore page shows a histogram.
 
-**What to build:**
-- Frontend only: In `explore.tsx`, add an `onClick` handler to `<Th>` cells. When clicked, render a Recharts `<BarChart>` (histogram) or `<LineChart>` (if column == "year") in a modal or side panel using data already in the query cache.
+**Built:**
+- `explore.tsx` — clicking a `<Th>` cell opens a histogram modal (Recharts `<BarChart>`) using cached query data.
+
+---
+
+## Next Steps
+
+- **Domain-agnostic training:** Refactor `TrainRequest` to describe datasources/join-keys/feature-columns generically (not hardcoded to `state`/`crop`/`year`). This unlocks the platform for non-agriculture domains.
+- **Ingest progress streaming:** Replace polling with WebSocket or SSE for real-time ingest progress.
+- **User-defined features:** Allow users to create computed columns in the Explore page (e.g. temperature × precipitation interaction).
+- **Batch prediction:** Accept a CSV of feature rows and return predictions for all of them.
+- **Authentication:** Add user accounts so researchers can have private model runs and datasets.
 
 ---
 
@@ -202,7 +189,7 @@ No domain-specific columns (e.g. no `state`, `crop`) — those values live insid
 
 1. **Copy the template:** `cp backend/app/ingest/template_datasource.py backend/app/ingest/my_source.py`
 2. **Fill in TODOs:** Set `DATASOURCE_NAME`, `DATASOURCE_DESCRIPTION`, `DATASOURCE_COLUMNS`, `SCOPE_PARAMS` (the filter dimensions your fetcher accepts), and implement `fetch_data(**scope) -> pd.DataFrame`.
-3. **Add a SQLModel:** In `backend/app/models.py`, add `MySourceBase`, `MySource(table=True)`, `MySourcePublic`, `MySourcesPublic` following the existing pattern. Column names must match `DATASOURCE_COLUMNS`.
+3. **Add a SQLModel:** In `backend/app/db_models.py`, add `MySourceBase`, `MySource(table=True)`, `MySourcePublic`, `MySourcesPublic` following the existing pattern. Column names must match `DATASOURCE_COLUMNS`.
 4. **Create an Alembic migration:** Inside the backend container run `alembic revision --autogenerate -m "add my_source table"`, then review the generated file.
 5. **Register with the datasource registry:** At module import time, call `DATASOURCE_REGISTRY.register(DATASOURCE_NAME, module=<this module>, model=MySource, ...)`. The registry entry drives the Explore tab, the Ingest scope form, and the feature column picker in the Model page — all automatically.
 6. **Add an API route:** Copy any existing route file (e.g. `yields.py`) to `my_source.py`, replace the SQLModel types and query filters, then add it to `backend/app/api/main.py` with `api_router.include_router(...)`.
@@ -213,7 +200,7 @@ The Explore page gains a new tab, the Ingest page gains the new source as a sele
 
 ## How to add a new ML model type (step-by-step)
 
-1. In `backend/app/api/routes/models.py`, extend the `MODEL_TYPES` Literal with the new type name and add a registration entry to the `MODEL_REGISTRY` dict: `{ "my_model": { "label": "My Model", "kind": "sklearn" | "pytorch" | "simulation" } }`.
+1. In `backend/app/api/routes/training.py`, extend the `MODEL_TYPES` Literal with the new type name and add a registration entry to the `MODEL_REGISTRY` dict: `{ "my_model": { "label": "My Model", "kind": "sklearn" | "pytorch" | "simulation" } }`.
 2. In the `train` endpoint, add a new `elif model_type == "my_model":` branch. It must: accept an `(X_train, y_train)` numpy pair, fit, predict on `(X_test, y_test)`, compute `r2` and `rmse`, and return a `feature_importances` list. The rest of the pipeline (data join, split, serialisation) is handled by the platform and must not be re-implemented.
 3. Register the type with `GET /api/v1/models/types` so the frontend `<Select>` discovers it automatically — never hardcode model names in React.
 
@@ -269,7 +256,7 @@ open http://localhost:5173
 ## Conventions summary for AI agents
 
 - **Never** access the DB directly from the frontend. All data goes through `/api/v1/`.
-- **Always** define request/response schemas as Pydantic/SQLModel classes in `models.py` or inline in the route file.
+- **Always** define request/response schemas as Pydantic/SQLModel classes in `db_models.py` or inline in the route file.
 - **Always** create an Alembic migration when changing a table definition.
 - **Always** add the new router to `backend/app/api/main.py` with `api_router.include_router(...)`.
 - **Always** use TanStack Query (`useQuery` / `useMutation`) for data fetching in React — never raw `fetch` or `useEffect` + `useState`.

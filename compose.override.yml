@@ -1,0 +1,44 @@
+# compose.override.yml — development live-reload overrides
+#
+# Docker Compose merges this file automatically when you run:
+#   docker compose up
+#
+# The production build is still available via:
+#   docker compose -f compose.yml up
+#
+# What this does:
+#   backend  — bind-mounts ./backend/app so Python sees edits instantly;
+#              switches to `fastapi dev` which enables Uvicorn --reload.
+#   frontend — builds the 'dev' Dockerfile target (Vite dev server) and
+#              bind-mounts ./frontend/src so the browser hot-reloads on save.
+#              node_modules in the container are preserved via an
+#              anonymous volume so you never need to run npm install locally.
+
+services:
+  backend:
+    # Override command to single-worker reload mode.
+    # fastapi dev sets RELOAD=true, LOG_LEVEL=debug, and a single worker.
+    command: fastapi dev --host 0.0.0.0 app/main.py
+    volumes:
+      # Existing prod volumes (inherited from compose.yml) plus:
+      - ./backend:/app          # live Python source
+      - ./data:/app/data:ro
+      - ./artifacts:/app/artifacts
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev                        # use the Vite dev-server stage
+    environment:
+      # Tell Vite's proxy where to reach the FastAPI backend inside Docker.
+      - BACKEND_URL=http://backend:8000
+    volumes:
+      - ./frontend/src:/app/src          # live TypeScript / TSX source
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      # Preserve node_modules installed during the image build —
+      # prevents the host mount from shadowing them.
+      - /app/node_modules

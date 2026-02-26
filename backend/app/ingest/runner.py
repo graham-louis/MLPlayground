@@ -19,9 +19,10 @@ from sqlmodel import Session, select
 import pandas as pd
 from app.core.config import settings
 from app.core.db import engine
-from app.ingest.climate_nldas import _validate_name, fetch_and_transform_weather, save_daily_weather_to_db
-from app.ingest.crop_nass import fetch_and_transform_yield
+from app.ingest.weather_daymet import _validate_name, fetch_and_transform_weather, save_daily_weather_to_db
+from app.ingest.yields_nass import fetch_and_transform_yield
 from app.ingest.soil_ssurgo import fetch_and_transform_soil
+from app.ingest.weather_psa import fetch_and_transform
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ def get_counties_for_state(state_name: str) -> list[str]:
 
 def upsert_soil_to_db(df: pd.DataFrame) -> None:
     """Upserts soil features in a single session/transaction."""
-    from app.models import Soil
+    from app.db_models import Soil
 
     if df is None or df.empty:
         logger.debug("No soil data to upsert.")
@@ -83,7 +84,7 @@ def upsert_soil_to_db(df: pd.DataFrame) -> None:
 
 def upsert_weather_to_db(df: pd.DataFrame) -> None:
     """Upserts annual weather rows in a single session/transaction."""
-    from app.models import Weather
+    from app.db_models import Weather
 
     if df is None or df.empty:
         logger.debug("No weather data to upsert.")
@@ -112,7 +113,7 @@ def upsert_weather_to_db(df: pd.DataFrame) -> None:
 
 def upsert_yield_to_db(df: pd.DataFrame) -> None:
     """Upserts annual yield rows in a single session/transaction."""
-    from app.models import Yield
+    from app.db_models import Yield
 
     if df is None or df.empty:
         logger.debug("No yield data to upsert.")
@@ -144,6 +145,59 @@ def upsert_yield_to_db(df: pd.DataFrame) -> None:
             session.add(obj)
         session.commit()
         logger.info("Upserted %d yield rows for %s.", len(df), df.iloc[0]["County"])
+
+def upsert_weather_psa_to_db(df: pd.DataFrame):
+    from app.db_models import WeatherPSA
+
+    if df is None or df.empty:
+        logger.debug("No weather data to upsert.")
+        return
+
+    with Session(engine) as session:
+        for _, row in df.iterrows():
+            obj = session.exec(
+                select(WeatherPSA).where(
+                    WeatherPSA.year == int(row["Year"]),
+                    WeatherPSA.date == row["Date"],
+                    WeatherPSA.county == row["County"],
+                    WeatherPSA.state == row["State"],
+                )
+            ).first()
+            if obj is None:
+                obj = WeatherPSA(year=int(row["Year"]), date=row["Date"], county=row["County"], state=row["State"])
+                obj.source = row.get("Source")
+                obj.lat = row.get("Lat")
+                obj.lon = row.get("Lon")
+                obj.precipitation = row.get("Precipitation")
+                obj.longwave_radiation = row.get("Longwave_Radiation")
+                obj.shortwave_radiation = row.get("Shortwave_Radiation")
+                obj.potential_energy = row.get("Potential_Energy")
+                obj.potential_evaporation = row.get("Potential_Evaporation")
+                obj.convective_precipitation = row.get("Convective_Precipitation")
+                obj.min_air_temperature = row.get("Min_Air_Temperature")
+                obj.max_air_temperature = row.get("Max_Air_Temperature")
+                obj.avg_air_temperature = row.get("Avg_Air_Temperature")
+                obj.min_humidity = row.get("Min_Humidity")
+                obj.max_humidity = row.get("Max_Humidity")
+                obj.avg_humidity = row.get("Avg_Humidity")
+                obj.min_relative_humidity = row.get("Min_Relative_Humidity")
+                obj.max_relative_humidity = row.get("Max_Relative_Humidity")
+                obj.avg_relative_humidity = row.get("Avg_Relative_Humidity")
+                obj.min_pressure = row.get("Min_Pressure")
+                obj.max_pressure = row.get("Max_Pressure")
+                obj.avg_pressure = row.get("Avg_Pressure")
+                obj.min_zonal_wind_speed = row.get("Min_Zonal_Wind_Speed")
+                obj.max_zonal_wind_speed = row.get("Max_Zonal_Wind_Speed")
+                obj.avg_zonal_wind_speed = row.get("Avg_Zonal_Wind_Speed")
+                obj.min_meridional_wind_speed = row.get("Min_Meridional_Wind_Speed")
+                obj.max_meridional_wind_speed = row.get("Max_Meridional_Wind_Speed")
+                obj.avg_meridional_wind_speed = row.get("Avg_Meridional_Wind_Speed")
+                obj.min_wind_speed = row.get("Min_Wind_Speed")
+                obj.max_wind_speed = row.get("Max_Wind_Speed")
+                obj.avg_wind_speed = row.get("Avg_Wind_Speed")
+            session.add(obj)
+        session.commit()
+        logger.info("Upserted %d weather rows for %s.", len(df), df.iloc[0]["County"])
 
 
 def main() -> None:
@@ -219,6 +273,12 @@ def main() -> None:
                 upsert_yield_to_db(yield_df)
             except Exception as exc:
                 logger.error("Yield ingestion failed for %s, %s: %s", county, state, exc)
+
+            try:
+                my_df = fetch_and_transform(county, state, start_year, end_year)
+                upsert_weather_psa_to_db(my_df) #← add this upsert function in runner.py too
+            except Exception as exc:
+                logger.error("MyDataSource ingestion failed for %s, %s: %s", county, state, exc)
 
     logger.info("Bulk ingestion complete.")
 

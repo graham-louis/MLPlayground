@@ -2,7 +2,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select, and_
 from app.core.db import get_session
-from app.models import Soil, SoilPublic, SoilsPublic
+from app.db_models import Soil, SoilPublic, SoilsPublic
 
 router = APIRouter(prefix="/soil", tags=["soil"])
 

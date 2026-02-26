@@ -22,6 +22,7 @@ function RootLayout() {
             <Link href="/" color="white" fontWeight="medium">Home</Link>
             <Link href="/explore" color="white" fontWeight="medium">Data Explorer</Link>
             <Link href="/model" color="white" fontWeight="medium">Model</Link>
+            <Link href="/ingest" color="white" fontWeight="medium">Ingest</Link>
           </Flex>
         </Flex>
       </Box>

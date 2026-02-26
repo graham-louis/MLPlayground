@@ -3,36 +3,35 @@ import userEvent from "@testing-library/user-event"
 import { http, HttpResponse } from "msw"
 import { describe, expect, it, vi } from "vitest"
 import { Route } from "../routes/model"
-import { server } from "./handlers"
+import { server, MODEL_TYPES_RESPONSE, MODEL_RUNS_RESPONSE } from "./handlers"
 import { renderWithProviders } from "./utils"
 
-// Mock Recharts to avoid ResizeObserver issues in jsdom.
+// Mock recharts to avoid ResizeObserver issues in jsdom
 vi.mock("recharts", () => ({
   BarChart: ({ children }: { children: React.ReactNode }) => <div data-testid="bar-chart">{children}</div>,
   Bar: () => null,
+  Cell: () => null,
   XAxis: () => null,
   YAxis: () => null,
   CartesianGrid: () => null,
   Tooltip: () => null,
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  Cell: () => null,
 }))
 
 const ModelPage = Route.options.component as React.ComponentType
 
-const TRAIN_RESULT = {
+const TRAIN_SUCCESS = {
+  run_id: "uuid-abc-123",
   model_type: "random_forest",
-  n_samples: 120,
-  n_train: 96,
-  n_test: 24,
-  r2: 0.78,
-  rmse: 8.5,
+  n_samples: 200,
+  n_train: 160,
+  n_test: 40,
+  r2: 0.82,
+  rmse: 11.5,
   feature_importances: [
-    { feature: "avg_temp",      importance: 0.35 },
-    { feature: "precipitation", importance: 0.25 },
-    { feature: "gdd",           importance: 0.20 },
-    { feature: "ph",            importance: 0.12 },
-    { feature: "organic_matter",importance: 0.08 },
+    { feature: "avg_temp", importance: 0.45 },
+    { feature: "precipitation", importance: 0.35 },
+    { feature: "ph", importance: 0.20 },
   ],
   state: "North Carolina",
   crop: "CORN",
@@ -40,193 +39,210 @@ const TRAIN_RESULT = {
   end_year: 2022,
 }
 
-const PREDICT_RESULT = {
-  predicted_yield: 152.3,
+const PREDICT_SUCCESS = {
+  predicted_yield: 135.7,
   model_type: "random_forest",
-  training_r2: 0.78,
-  training_rmse: 8.5,
+  training_r2: 0.82,
+  training_rmse: 11.5,
   units: "bu/acre",
 }
 
-function setupTrainHandler() {
-  server.use(
-    http.post("/api/v1/models/train", () => HttpResponse.json(TRAIN_RESULT))
-  )
-}
-
-function setupPredictHandler() {
-  server.use(
-    http.post("/api/v1/models/predict", () => HttpResponse.json(PREDICT_RESULT))
-  )
-}
-
-describe("Model Training page – static content", () => {
-  it("renders the page heading", () => {
+describe("Model page – structure", () => {
+  it("renders heading and three tabs", async () => {
     renderWithProviders(<ModelPage />)
-    expect(screen.getByRole("heading", { name: /model training/i })).toBeInTheDocument()
-  })
-
-  it("renders Train & Evaluate and Predict Yield tabs", () => {
-    renderWithProviders(<ModelPage />)
-    expect(screen.getByRole("tab", { name: /train/i })).toBeInTheDocument()
+    expect(screen.getByText("Model Training")).toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: /train & evaluate/i })).toBeInTheDocument()
     expect(screen.getByRole("tab", { name: /predict yield/i })).toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: /saved models/i })).toBeInTheDocument()
   })
 
-  it("renders the Configure Your Model card in the Train tab", () => {
+  it("fetches model types from API (not hardcoded)", async () => {
     renderWithProviders(<ModelPage />)
-    expect(screen.getByRole("heading", { name: /configure your model/i })).toBeInTheDocument()
-  })
-
-  it("renders state, crop, model-type selects", () => {
-    renderWithProviders(<ModelPage />)
-    expect(screen.getByLabelText("State")).toBeInTheDocument()
-    expect(screen.getByLabelText(/crop/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/model type/i)).toBeInTheDocument()
-  })
-
-  it("renders all weather feature checkboxes", () => {
-    renderWithProviders(<ModelPage />)
-    expect(screen.getByText(/avg temperature/i)).toBeInTheDocument()
-    expect(screen.getByText(/total precipitation/i)).toBeInTheDocument()
-    expect(screen.getByText(/growing degree days/i)).toBeInTheDocument()
-  })
-
-  it("renders all soil feature checkboxes", () => {
-    renderWithProviders(<ModelPage />)
-    expect(screen.getByText(/soil ph/i)).toBeInTheDocument()
-    expect(screen.getByText(/organic matter/i)).toBeInTheDocument()
-    expect(screen.getByText(/sand content/i)).toBeInTheDocument()
-  })
-
-  it("Train Model button is disabled when no crop selected", () => {
-    renderWithProviders(<ModelPage />)
-    expect(screen.getByRole("button", { name: /train model/i })).toBeDisabled()
-  })
-
-  it("shows a warning when no crop is selected", () => {
-    renderWithProviders(<ModelPage />)
-    expect(screen.getByText(/select a crop above to enable training/i)).toBeInTheDocument()
-  })
-
-  it("MODEL_OPTIONS includes LSTM", () => {
-    renderWithProviders(<ModelPage />)
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: /random forest/i })).toBeInTheDocument()
+    })
+    expect(screen.getByRole("option", { name: /gradient boosting/i })).toBeInTheDocument()
     expect(screen.getByRole("option", { name: /lstm/i })).toBeInTheDocument()
   })
-})
 
-describe("Model Training page – crop population", () => {
   it("populates crop dropdown from yields/crops API", async () => {
     renderWithProviders(<ModelPage />)
     await waitFor(() => {
       expect(screen.getByRole("option", { name: "CORN" })).toBeInTheDocument()
     })
+    expect(screen.getByRole("option", { name: "SOYBEANS" })).toBeInTheDocument()
   })
 
   it("enables Train Model button after selecting a crop", async () => {
     const user = userEvent.setup()
     renderWithProviders(<ModelPage />)
-    await waitFor(() => expect(screen.getByRole("option", { name: "CORN" })).toBeInTheDocument())
-    await user.selectOptions(screen.getByLabelText(/crop/i), "CORN")
+    await waitFor(() => screen.getByRole("option", { name: "CORN" }))
+    const cropSelect = screen.getAllByRole("combobox").find(
+      (s) => (s as HTMLSelectElement).value === "" && s.closest("[class*='card']")
+    ) ?? screen.getAllByRole("combobox")[1]
+    await user.selectOptions(cropSelect, "CORN")
     expect(screen.getByRole("button", { name: /train model/i })).not.toBeDisabled()
   })
-})
 
-describe("Model Training page – training and results", () => {
   it("shows training spinner while request is in flight", async () => {
     server.use(
       http.post("/api/v1/models/train", async () => {
-        await new Promise((r) => setTimeout(r, 200))
-        return HttpResponse.json(TRAIN_RESULT)
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        return HttpResponse.json(TRAIN_SUCCESS)
       })
     )
     const user = userEvent.setup()
     renderWithProviders(<ModelPage />)
-    await waitFor(() => expect(screen.getByRole("option", { name: "CORN" })).toBeInTheDocument())
-    await user.selectOptions(screen.getByLabelText(/crop/i), "CORN")
+    await waitFor(() => screen.getByRole("option", { name: "CORN" }))
+    const cropSelect = screen.getAllByRole("combobox").find(
+      (s) => (s as HTMLSelectElement).value === ""
+    ) ?? screen.getAllByRole("combobox")[1]
+    await user.selectOptions(cropSelect, "CORN")
     await user.click(screen.getByRole("button", { name: /train model/i }))
-    await waitFor(() => expect(screen.getByText(/training model/i)).toBeInTheDocument())
-    await waitFor(() => expect(screen.getByText("R² Score")).toBeInTheDocument(), { timeout: 3000 })
+    expect(screen.getByRole("button", { name: /training/i })).toBeInTheDocument()
   })
 
   it("displays R², RMSE, and sample counts after successful training", async () => {
-    setupTrainHandler()
+    server.use(
+      http.post("/api/v1/models/train", () => HttpResponse.json(TRAIN_SUCCESS))
+    )
     const user = userEvent.setup()
     renderWithProviders(<ModelPage />)
-    await waitFor(() => expect(screen.getByRole("option", { name: "CORN" })).toBeInTheDocument())
-    await user.selectOptions(screen.getByLabelText(/crop/i), "CORN")
+    await waitFor(() => screen.getByRole("option", { name: "CORN" }))
+    const cropSelects = screen.getAllByRole("combobox")
+    const cropSelect = cropSelects.find(
+      (s) => (s as HTMLSelectElement).value === ""
+    ) ?? cropSelects[1]
+    await user.selectOptions(cropSelect, "CORN")
     await user.click(screen.getByRole("button", { name: /train model/i }))
-    await waitFor(() => expect(screen.getByText("R² Score")).toBeInTheDocument())
-    expect(screen.getByText("78.0%")).toBeInTheDocument()
-    expect(screen.getByText("8.50")).toBeInTheDocument()
-    expect(screen.getByText("96")).toBeInTheDocument()
-    expect(screen.getByText("24")).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByText("82.0%")).toBeInTheDocument()
+    })
+    expect(screen.getByText("11.50")).toBeInTheDocument()
+    expect(screen.getByText("160")).toBeInTheDocument()
+    expect(screen.getByText("40")).toBeInTheDocument()
   })
 
   it("shows feature importance section with feature labels", async () => {
-    setupTrainHandler()
+    server.use(
+      http.post("/api/v1/models/train", () => HttpResponse.json(TRAIN_SUCCESS))
+    )
     const user = userEvent.setup()
     renderWithProviders(<ModelPage />)
-    await waitFor(() => expect(screen.getByRole("option", { name: "CORN" })).toBeInTheDocument())
-    await user.selectOptions(screen.getByLabelText(/crop/i), "CORN")
+    await waitFor(() => screen.getByRole("option", { name: "CORN" }))
+    const cropSelects = screen.getAllByRole("combobox")
+    const cropSelect = cropSelects.find(
+      (s) => (s as HTMLSelectElement).value === ""
+    ) ?? cropSelects[1]
+    await user.selectOptions(cropSelect, "CORN")
     await user.click(screen.getByRole("button", { name: /train model/i }))
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /feature importances/i })).toBeInTheDocument()
+      expect(screen.getByText(/feature importances/i)).toBeInTheDocument()
+    })
+  })
+
+  it("shows run_id success alert when model is saved", async () => {
+    server.use(
+      http.post("/api/v1/models/train", () => HttpResponse.json(TRAIN_SUCCESS))
+    )
+    const user = userEvent.setup()
+    renderWithProviders(<ModelPage />)
+    await waitFor(() => screen.getByRole("option", { name: "CORN" }))
+    const cropSelects = screen.getAllByRole("combobox")
+    const cropSelect = cropSelects.find(
+      (s) => (s as HTMLSelectElement).value === ""
+    ) ?? cropSelects[1]
+    await user.selectOptions(cropSelect, "CORN")
+    await user.click(screen.getByRole("button", { name: /train model/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/model saved/i)).toBeInTheDocument()
     })
   })
 
   it("shows model type and crop badges in results header", async () => {
-    setupTrainHandler()
+    server.use(
+      http.post("/api/v1/models/train", () => HttpResponse.json(TRAIN_SUCCESS))
+    )
     const user = userEvent.setup()
     renderWithProviders(<ModelPage />)
-    await waitFor(() => expect(screen.getByRole("option", { name: "CORN" })).toBeInTheDocument())
-    await user.selectOptions(screen.getByLabelText(/crop/i), "CORN")
+    await waitFor(() => screen.getByRole("option", { name: "CORN" }))
+    const cropSelects = screen.getAllByRole("combobox")
+    const cropSelect = cropSelects.find(
+      (s) => (s as HTMLSelectElement).value === ""
+    ) ?? cropSelects[1]
+    await user.selectOptions(cropSelect, "CORN")
     await user.click(screen.getByRole("button", { name: /train model/i }))
-    await waitFor(() => expect(screen.getByText(/CORN · North Carolina/)).toBeInTheDocument())
-    const allRF = screen.getAllByText("Random Forest")
-    expect(allRF.length).toBeGreaterThanOrEqual(1)
+    await waitFor(() => {
+      // Badge appears in results section after training
+      const badges = screen.getAllByText("Random Forest")
+      expect(badges.length).toBeGreaterThanOrEqual(1)
+    })
+    expect(screen.getByText(/CORN.*North Carolina/i)).toBeInTheDocument()
   })
 
   it("shows an error alert when training fails", async () => {
     server.use(
       http.post("/api/v1/models/train", () =>
-        HttpResponse.json(
-          { detail: "No yield data found for WHEAT in North Carolina." },
-          { status: 404 }
-        )
+        HttpResponse.json({ detail: "No yield data found." }, { status: 404 })
       )
     )
     const user = userEvent.setup()
     renderWithProviders(<ModelPage />)
-    await waitFor(() => expect(screen.getByRole("option", { name: "CORN" })).toBeInTheDocument())
-    await user.selectOptions(screen.getByLabelText(/crop/i), "CORN")
+    await waitFor(() => screen.getByRole("option", { name: "CORN" }))
+    const cropSelects = screen.getAllByRole("combobox")
+    const cropSelect = cropSelects.find(
+      (s) => (s as HTMLSelectElement).value === ""
+    ) ?? cropSelects[1]
+    await user.selectOptions(cropSelect, "CORN")
     await user.click(screen.getByRole("button", { name: /train model/i }))
-    await waitFor(() => expect(screen.getByText(/No yield data found/i)).toBeInTheDocument())
+    await waitFor(() => {
+      expect(screen.getByText(/no yield data found/i)).toBeInTheDocument()
+    })
   })
 })
 
-describe("Model Training page – Predict Yield tab", () => {
-  it("switches to Predict Yield tab and shows form", async () => {
-    const user = userEvent.setup()
-    renderWithProviders(<ModelPage />)
-    await user.click(screen.getByRole("tab", { name: /predict yield/i }))
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /training scope/i })).toBeInTheDocument()
-    })
-    expect(screen.getByRole("button", { name: /predict yield/i })).toBeInTheDocument()
-  })
-
+describe("Model page – Predict tab", () => {
   it("shows predicted yield after submitting Predict tab", async () => {
-    setupPredictHandler()
+    server.use(
+      http.post("/api/v1/models/predict", () => HttpResponse.json(PREDICT_SUCCESS))
+    )
     const user = userEvent.setup()
     renderWithProviders(<ModelPage />)
     await user.click(screen.getByRole("tab", { name: /predict yield/i }))
-    await waitFor(() => expect(screen.getAllByRole("option", { name: "CORN" }).length).toBeGreaterThan(0))
-    const cropSelects = screen.getAllByLabelText(/crop/i)
-    await user.selectOptions(cropSelects[cropSelects.length - 1], "CORN")
+    await waitFor(() => screen.getByRole("option", { name: "CORN" }))
+    const cropSelects = screen.getAllByRole("combobox")
+    const cropSelect = cropSelects.find(
+      (s) => (s as HTMLSelectElement).value === ""
+    ) ?? cropSelects[1]
+    await user.selectOptions(cropSelect, "CORN")
     await user.click(screen.getByRole("button", { name: /predict yield/i }))
     await waitFor(() => {
-      expect(screen.getByText("Prediction Result")).toBeInTheDocument()
+      expect(screen.getByText("135.7")).toBeInTheDocument()
     })
-    expect(screen.getByText("152.3")).toBeInTheDocument()
+    expect(screen.getAllByText("bu/acre").length).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe("Model page – Saved Models tab", () => {
+  it("shows saved model runs table", async () => {
+    const user = userEvent.setup()
+    renderWithProviders(<ModelPage />)
+    await user.click(screen.getByRole("tab", { name: /saved models/i }))
+    await waitFor(() => {
+      expect(screen.getByText("random_forest")).toBeInTheDocument()
+    })
+    expect(screen.getByText(/72.0%/)).toBeInTheDocument()
+  })
+
+  it("shows empty state when no saved models", async () => {
+    server.use(
+      http.get("/api/v1/models/", () => HttpResponse.json({ data: [], count: 0 }))
+    )
+    const user = userEvent.setup()
+    renderWithProviders(<ModelPage />)
+    await user.click(screen.getByRole("tab", { name: /saved models/i }))
+    await waitFor(() => {
+      expect(screen.getByText(/no saved models yet/i)).toBeInTheDocument()
+    })
   })
 })

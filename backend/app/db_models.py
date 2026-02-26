@@ -1,5 +1,7 @@
 from typing import Optional
 from sqlmodel import Field, SQLModel
+import uuid as _uuid
+from datetime import datetime as _datetime
 
 
 # --- Yield Models ---
@@ -101,6 +103,86 @@ class DailyWeather(DailyWeatherBase, table=True):
 class DailyWeatherPublic(DailyWeatherBase):
     id: int
 
+
+# --- Model Run (persisted training artifact) ---
+
+class ModelRunBase(SQLModel):
+    run_id: str                             # UUID string
+    model_type: str
+    datasources: str                        # JSON list, e.g. '["yields","weather","soil"]'
+    join_keys: str                          # JSON list, e.g. '["year","state","county"]'
+    feature_columns: str                    # JSON list
+    target_column: str
+    filters: str                            # JSON object, e.g. '{"state":"Iowa","crop":"CORN"}'
+    r2: Optional[float] = None
+    rmse: Optional[float] = None
+    n_samples: Optional[int] = None
+    artifact_path: Optional[str] = None    # path to .pkl file on disk
+    created_at: str = Field(
+        default_factory=lambda: _datetime.utcnow().isoformat()
+    )
+
+
+class ModelRun(ModelRunBase, table=True):
+    __tablename__ = "model_runs"
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+
+class ModelRunPublic(ModelRunBase):
+    id: int
+
+
+class ModelRunsPublic(SQLModel):
+    data: list[ModelRunPublic]
+    count: int
+
+# --- Weather PSA Models ---
+class WeatherPSABase(SQLModel):
+    year: int
+    state: str
+    county: str
+    source: str = "weather_psa"
+    date: str           # ISO date string, e.g. "1980-01-01"
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    precipitation: Optional[float] = None
+    longwave_radiation: Optional[float] = None
+    shortwave_radiation: Optional[float] = None
+    potential_energy: Optional[float] = None
+    potential_evaporation: Optional[float] = None
+    convective_precipitation: Optional[float] = None
+    min_air_temperature: Optional[float] = None
+    max_air_temperature: Optional[float] = None
+    avg_air_temperature: Optional[float] = None
+    min_humidity: Optional[float] = None
+    max_humidity: Optional[float] = None
+    avg_humidity: Optional[float] = None
+    min_relative_humidity: Optional[float] = None
+    max_relative_humidity: Optional[float] = None
+    avg_relative_humidity: Optional[float] = None
+    min_pressure: Optional[float] = None
+    max_pressure: Optional[float] = None
+    avg_pressure: Optional[float] = None
+    min_zonal_wind_speed: Optional[float] = None
+    max_zonal_wind_speed: Optional[float] = None
+    avg_zonal_wind_speed: Optional[float] = None
+    min_meridional_wind_speed: Optional[float] = None
+    max_meridional_wind_speed: Optional[float] = None
+    avg_meridional_wind_speed: Optional[float] = None
+    min_wind_speed: Optional[float] = None
+    max_wind_speed: Optional[float] = None
+    avg_wind_speed: Optional[float] = None
+
+class WeatherPSA(WeatherPSABase, table=True):
+    __tablename__ = "weather_psa"
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+class WeatherPSAPublic(WeatherPSABase):
+    id: int
+
+class WeathersPSAPublic(SQLModel):
+    data: list[WeatherPSA]
+    count: int
 
 # Generic message
 class Message(SQLModel):

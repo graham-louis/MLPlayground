@@ -1,12 +1,16 @@
 """
-Model training endpoint for MLPlayground.
+Model training, persistence, and inference endpoints for MLPlayground.
 
-A researcher selects features and a target, picks a model type, and
-this endpoint joins the Yield + Weather + Soil tables, trains the model,
-and returns metrics + feature importances they can inspect immediately.
+Trained models are serialised to disk with joblib and their metadata
+(features, filters, metrics) is stored in the model_runs DB table.
+This lets researchers reload any past run for inference without retraining.
 """
+import json
+import os
+import uuid
 from typing import Literal, Optional
 
+import joblib
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,18 +18,31 @@ from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
 from sqlmodel import Session, select
 
 from app.core.db import get_session
-from app.models import Soil, Weather, Yield, Message
+from app.db_models import ModelRun, ModelRunPublic, ModelRunsPublic, Soil, Weather, Yield
 from pydantic import BaseModel
+
+ARTIFACTS_DIR = os.environ.get("ARTIFACTS_DIR", "/app/artifacts/models")
 
 router = APIRouter(prefix="/models", tags=["models"])
 
-# ---------------------------------------------------------------------------
-# Request / response schemas
-# ---------------------------------------------------------------------------
+
+class ModelTypeInfo(BaseModel):
+    key: str
+    label: str
+    kind: str
+    description: str
+    supports_predict: bool
+
+
+@router.get("/types", response_model=list[ModelTypeInfo])
+def list_model_types() -> list[ModelTypeInfo]:
+    """Return all registered model types so the frontend never hardcodes them."""
+    return [ModelTypeInfo(key=k, **v) for k, v in MODEL_REGISTRY.items()]
+
+
 
 AVAILABLE_FEATURES = [
     # Weather
@@ -41,7 +58,41 @@ AVAILABLE_FEATURES = [
     "clay_pct",
 ]
 
-MODEL_TYPES = Literal["linear_regression", "random_forest", "gradient_boosting", "apsimx", "lstm"]
+MODEL_TYPES = Literal["linear_regression", "random_forest", "gradient_boosting", "lstm", "pycaret"]
+
+# Registry: maps model type key → metadata (drives GET /api/v1/models/types)
+MODEL_REGISTRY: dict[str, dict] = {
+    "linear_regression": {
+        "label": "Linear Regression",
+        "kind": "sklearn",
+        "description": "Simple interpretable baseline. Fast to train, assumes linear feature-target relationships.",
+        "supports_predict": True,
+    },
+    "random_forest": {
+        "label": "Random Forest",
+        "kind": "sklearn",
+        "description": "Ensemble of decision trees. Robust to outliers and nonlinear patterns. Good default choice.",
+        "supports_predict": True,
+    },
+    "gradient_boosting": {
+        "label": "Gradient Boosting",
+        "kind": "sklearn",
+        "description": "Sequential boosted trees. Often highest accuracy for tabular data.",
+        "supports_predict": True,
+    },
+    "lstm": {
+        "label": "LSTM (Sequence Neural Network)",
+        "kind": "pytorch",
+        "description": "Recurrent neural network that learns from multi-year sequences. Captures carry-over effects.",
+        "supports_predict": False,
+    },
+    "pycaret": {
+        "label": "AutoML (PyCaret)",
+        "kind": "pycaret",
+        "description": "Automatically compares all regression algorithms and returns the best performer. Slower but hands-off.",
+        "supports_predict": True,
+    },
+}
 
 
 class TrainRequest(BaseModel):
@@ -64,6 +115,7 @@ class FeatureImportance(BaseModel):
 class TrainResult(BaseModel):
     """Results returned to the frontend after training."""
 
+    run_id: Optional[str] = None       # UUID of the persisted model run (None for lstm)
     model_type: str
     n_samples: int
     n_train: int
@@ -75,12 +127,6 @@ class TrainResult(BaseModel):
     crop: str
     start_year: int
     end_year: int
-
-
-class DataSourceInfo(BaseModel):
-    name: str
-    description: str
-    fields: list[str]
 
 
 class PredictRequest(BaseModel):
@@ -119,14 +165,13 @@ def _load_joined_data(
     Fetches Yield, Weather, and Soil rows for the requested scope and
     joins them on (county, state, year).  Returns a flat DataFrame.
     """
-    yields = session.exec(
-        select(Yield).where(
-            Yield.state == state,
-            Yield.crop == crop,
-            Yield.year >= start_year,
-            Yield.year <= end_year,
-        )
-    ).all()
+    conditions = [
+        Yield.state == state,
+        Yield.crop == crop,
+        Yield.year >= start_year,
+        Yield.year <= end_year,
+    ]
+    yields = session.exec(select(Yield).where(*conditions)).all()
 
     if not yields:
         return pd.DataFrame()
@@ -135,13 +180,12 @@ def _load_joined_data(
         [{"year": y.year, "county": y.county, "state": y.state, "crop_yield": y.value} for y in yields]
     )
 
-    weather_rows = session.exec(
-        select(Weather).where(
-            Weather.state == state,
-            Weather.year >= start_year,
-            Weather.year <= end_year,
-        )
-    ).all()
+    weather_conditions = [
+        Weather.state == state,
+        Weather.year >= start_year,
+        Weather.year <= end_year,
+    ]
+    weather_rows = session.exec(select(Weather).where(*weather_conditions)).all()
     weather_df = pd.DataFrame(
         [
             {
@@ -157,9 +201,7 @@ def _load_joined_data(
         ]
     )
 
-    soil_rows = session.exec(
-        select(Soil).where(Soil.state == state)
-    ).all()
+    soil_rows = session.exec(select(Soil).where(Soil.state == state)).all()
     soil_df = pd.DataFrame(
         [
             {
@@ -184,37 +226,6 @@ def _load_joined_data(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/datasources", response_model=list[DataSourceInfo])
-def get_datasources() -> list[DataSourceInfo]:
-    """
-    Returns metadata for every available data source.
-    The frontend uses this to auto-populate the Data Explorer tabs.
-    """
-    return [
-        DataSourceInfo(
-            name="yields",
-            description="Annual crop yield data (bu/acre) from USDA NASS QuickStats.",
-            fields=["year", "state", "county", "crop", "value", "unit"],
-        ),
-        DataSourceInfo(
-            name="weather",
-            description="Growing-season weather aggregates from Daymet (NASA).",
-            fields=["year", "state", "county", "avg_temp", "precipitation", "gdd", "vp", "srad"],
-        ),
-        DataSourceInfo(
-            name="soil",
-            description="Topsoil properties from SSURGO (USDA NRCS).",
-            fields=["state", "county", "ph", "organic_matter", "sand_pct", "clay_pct"],
-        ),
-    ]
-
-
-@router.get("/features", response_model=list[str])
-def get_available_features() -> list[str]:
-    """Returns the list of feature columns available for model training."""
-    return AVAILABLE_FEATURES
-
-
 @router.post("/train", response_model=TrainResult)
 def train_model(
     req: TrainRequest,
@@ -227,25 +238,18 @@ def train_model(
     trains the selected model, and returns evaluation metrics and
     feature importances so you can understand what drives the prediction.
     """
-    # Validate requested features (not applicable for ApsimX which uses its own inputs)
-    if req.model_type != "apsimx":
-        invalid = [f for f in req.features if f not in AVAILABLE_FEATURES]
-        if invalid:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Unknown feature(s): {invalid}. Valid features: {AVAILABLE_FEATURES}",
-            )
-        if not req.features:
-            raise HTTPException(status_code=422, detail="At least one feature must be selected.")
+    invalid = [f for f in req.features if f not in AVAILABLE_FEATURES]
+    if invalid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown feature(s): {invalid}. Valid features: {AVAILABLE_FEATURES}",
+        )
+    if not req.features:
+        raise HTTPException(status_code=422, detail="At least one feature must be selected.")
 
     start_year = req.start_year or 1980
     end_year = req.end_year or 2022
 
-    # ── ApsimX path ────────────────────────────────────────────────────────
-    if req.model_type == "apsimx":
-        return _run_apsimx_model(req, session, start_year, end_year)
-
-    # ── sklearn / LSTM path ───────────────────────────────────────────────
     df = _load_joined_data(session, req.state, req.crop, start_year, end_year)
 
     if df.empty:
@@ -289,6 +293,12 @@ def train_model(
             req, X_train, X_test, y_train, y_test, available_features, df_model, start_year, end_year
         )
 
+    if req.model_type == "pycaret":
+        return _run_pycaret_model(
+            req, df_model, available_features, X_train, X_test, y_train, y_test,
+            session, start_year, end_year,
+        )
+
     model_map = {
         "linear_regression": LinearRegression(),
         "random_forest": RandomForestRegressor(n_estimators=100, random_state=42),
@@ -316,7 +326,40 @@ def train_model(
         )
     ]
 
-    return TrainResult(
+    # Persist model artifact + metadata
+    run_id = str(uuid.uuid4())
+    artifact_path: Optional[str] = None
+    try:
+        os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+        artifact_path = os.path.join(ARTIFACTS_DIR, f"{run_id}.pkl")
+        joblib.dump({"model": model, "features": available_features}, artifact_path)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("Failed to persist model artifact for run %s", run_id)
+
+    run = ModelRun(
+        run_id=run_id,
+        model_type=req.model_type,
+        datasources=json.dumps(["yields", "weather", "soil"]),
+        join_keys=json.dumps(["year", "state", "county"]),
+        feature_columns=json.dumps(available_features),
+        target_column="value",
+        filters=json.dumps({"state": req.state, "crop": req.crop,
+                            "start_year": start_year, "end_year": end_year}),
+        r2=round(r2, 4),
+        rmse=round(rmse, 4),
+        n_samples=len(df_model),
+        artifact_path=artifact_path,
+    )
+    try:
+        session.add(run)
+        session.commit()
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("Failed to persist ModelRun record for run %s", run_id)
+        session.rollback()
+
+    result = TrainResult(
         model_type=req.model_type,
         n_samples=len(df_model),
         n_train=len(X_train),
@@ -329,6 +372,146 @@ def train_model(
         start_year=start_year,
         end_year=end_year,
     )
+    result.run_id = run_id  # type: ignore[attr-defined]
+    return result
+
+
+def _run_pycaret_model(
+    req: "TrainRequest",
+    df_model: pd.DataFrame,
+    feature_names: list[str],
+    X_train: np.ndarray,
+    X_test: np.ndarray,
+    y_train: np.ndarray,
+    y_test: np.ndarray,
+    session: Session,
+    start_year: int,
+    end_year: int,
+) -> "TrainResult":
+    """
+    Use PyCaret's AutoML to compare all regression algorithms and return the best.
+
+    PyCaret runs k-fold cross-validation on the training split for ranking, then
+    we evaluate the selected best model on the held-out test split so metrics are
+    directly comparable to the other model types.
+
+    The winning estimator is a plain sklearn-compatible object and can be loaded
+    with joblib for future inference.
+    """
+    try:
+        from pycaret.regression import (
+            compare_models,
+            get_config,
+            pull,
+            setup,
+        )
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="AutoML requires the 'pycaret' package. Install it with: pip install 'pycaret[full]'",
+        ) from exc
+
+    # Build a clean DataFrame for PyCaret (feature columns + target)
+    df_pc = df_model[feature_names + ["crop_yield"]].dropna().copy()
+
+    # PyCaret needs the train/test split to match ours for fair metric comparison.
+    # We set train_size explicitly so compare_models's CV uses the same portion.
+    train_size = 1.0 - req.test_size
+
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    try:
+        setup(
+            data=df_pc,
+            target="crop_yield",
+            session_id=42,
+            train_size=train_size,
+            verbose=False,
+            html=False,
+            log_experiment=False,
+            system_log=False,
+        )
+        best_model = compare_models(sort="RMSE", verbose=True, errors="ignore")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"PyCaret AutoML failed: {exc}",
+        ) from exc
+
+    
+
+    # Evaluate on held-out test split for consistent metric reporting
+    X_test_df = pd.DataFrame(X_test, columns=feature_names)
+    y_pred = best_model.predict(X_test_df)
+    r2 = float(r2_score(y_test, y_pred))
+    rmse = float(np.sqrt(mean_squared_error(y_test, y_pred)))
+
+    # Best model name from comparison table
+    comparison_df = pull()
+    best_label = comparison_df.index[0] if len(comparison_df) > 0 else "best"
+    _log.info("PyCaret best model: %s  R²=%.3f  RMSE=%.3f", best_label, r2, rmse)
+
+    # Feature importances — not all estimators expose them; fall back gracefully
+    if hasattr(best_model, "feature_importances_"):
+        raw = best_model.feature_importances_
+    elif hasattr(best_model, "coef_"):
+        raw = np.abs(best_model.coef_)
+        raw = raw / raw.sum() if raw.sum() > 0 else raw
+    else:
+        raw = np.ones(len(feature_names)) / len(feature_names)
+
+    importances = [
+        FeatureImportance(feature=f, importance=float(v))
+        for f, v in sorted(zip(feature_names, raw), key=lambda x: x[1], reverse=True)
+    ]
+
+    # Persist
+    run_id = str(uuid.uuid4())
+    artifact_path: Optional[str] = None
+    try:
+        os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+        artifact_path = os.path.join(ARTIFACTS_DIR, f"{run_id}.pkl")
+        joblib.dump({"model": best_model, "features": feature_names}, artifact_path)
+    except Exception:
+        _log.warning("Failed to persist PyCaret artifact for run %s", run_id)
+
+    run = ModelRun(
+        run_id=run_id,
+        model_type=f"pycaret:{best_label}",
+        datasources=json.dumps(["yields", "weather", "soil"]),
+        join_keys=json.dumps(["year", "state", "county"]),
+        feature_columns=json.dumps(feature_names),
+        target_column="value",
+        filters=json.dumps({"state": req.state, "crop": req.crop,
+                            "start_year": start_year, "end_year": end_year}),
+        r2=round(r2, 4),
+        rmse=round(rmse, 4),
+        n_samples=len(df_model),
+        artifact_path=artifact_path,
+    )
+    try:
+        session.add(run)
+        session.commit()
+    except Exception:
+        _log.warning("Failed to persist ModelRun record for run %s", run_id)
+        session.rollback()
+
+    result = TrainResult(
+        model_type=f"pycaret:{best_label}",
+        n_samples=len(df_model),
+        n_train=len(X_train),
+        n_test=len(X_test),
+        r2=round(r2, 4),
+        rmse=round(rmse, 4),
+        feature_importances=importances,
+        state=req.state,
+        crop=req.crop,
+        start_year=start_year,
+        end_year=end_year,
+    )
+    result.run_id = run_id  # type: ignore[attr-defined]
+    return result
 
 
 def _run_lstm_model(
@@ -499,12 +682,12 @@ def predict_yield(
 
     This lets researchers run counterfactual scenarios (e.g. "what would a
     Random Forest trained on 2000–2020 predict for avg_temp=24, precip=500?").
-    ApsimX is not supported via this endpoint (use /train instead).
+    LSTM is not supported via this endpoint (use /train instead).
     """
-    if req.model_type in ("apsimx", "lstm"):
+    if req.model_type in ("lstm", "pycaret"):
         raise HTTPException(
             status_code=422,
-            detail=f"'{req.model_type}' is not supported via /predict. Use /train instead.",
+            detail=f"'{req.model_type}' is not supported via /predict. Use /train to train and save the model, then use /{'{run_id}'}/predict for inference.",
         )
 
     train_start = req.train_start_year or 1980
@@ -556,132 +739,60 @@ def predict_yield(
     )
 
 
-def _run_apsimx_model(
-    req: "TrainRequest",
-    session: Session,
-    start_year: int,
-    end_year: int,
-) -> "TrainResult":
+# ---------------------------------------------------------------------------
+# Saved model run gallery
+# ---------------------------------------------------------------------------
+
+@router.get("/", response_model=ModelRunsPublic)
+def list_model_runs(
+    session: Session = Depends(get_session),
+    skip: int = 0,
+    limit: int = 50,
+) -> ModelRunsPublic:
+    """List all saved model training runs, newest first."""
+    from sqlalchemy import func
+    total = session.exec(select(func.count()).select_from(ModelRun)).one()
+    runs = session.exec(select(ModelRun).offset(skip).limit(limit)).all()
+    return ModelRunsPublic(data=list(runs), count=total)
+
+
+class SavedRunPredictRequest(BaseModel):
+    """Predict using a previously saved model run (no retraining needed)."""
+    input_values: dict[str, float]
+
+
+@router.post("/{run_id}/predict", response_model=PredictResult)
+def predict_with_saved_run(
+    run_id: str,
+    req: SavedRunPredictRequest,
+    session: Session = Depends(get_session),
+) -> PredictResult:
     """
-    Run ApsimX simulations for each county in the requested state/crop/year range,
-    compare simulated yields to observed USDA NASS yields, and return metrics.
-
-    Weather and soil data are sourced from the DailyWeather and Soil DB tables.
-    Run POST /api/v1/ingest/trigger-daily-weather to populate daily weather data
-    before using this model type.
-
-    ApsimX is a process-based crop simulator, not an ML model.  There is no
-    train/test split — the simulator uses only weather and agronomic rules.
-    R² and RMSE measure how well the physics model reproduces observed data.
+    Load a saved sklearn model by ``run_id`` and run inference against
+    the supplied feature values.  Missing values default to 0.0.
     """
-    from app.ingest.apsimx_runner import simulate_yields, CROP_CONFIG
+    run = session.exec(select(ModelRun).where(ModelRun.run_id == run_id)).first()
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Model run '{run_id}' not found.")
 
-    crop_upper = req.crop.upper()
-    if crop_upper not in CROP_CONFIG:
+    if not run.artifact_path or not os.path.exists(run.artifact_path):
         raise HTTPException(
-            status_code=422,
-            detail=(
-                f"ApsimX has no template for crop '{req.crop}'. "
-                f"Supported crops: {', '.join(CROP_CONFIG.keys())}."
-            ),
+            status_code=409,
+            detail=f"Artifact for run '{run_id}' is missing from disk. Retrain the model.",
         )
 
-    # Fetch observed yields for the state
-    obs_yields = session.exec(
-        select(Yield).where(
-            Yield.state == req.state,
-            Yield.crop == req.crop,
-            Yield.year >= start_year,
-            Yield.year <= end_year,
-        )
-    ).all()
+    payload = joblib.load(run.artifact_path)
+    model = payload["model"]
+    features: list[str] = payload["features"]
 
-    if not obs_yields:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"No observed yield data for {req.crop} in {req.state} "
-                f"({start_year}–{end_year}). Run the ingestion pipeline first."
-            ),
-        )
+    x_input = np.array(
+        [[req.input_values.get(f, 0.0) for f in features]], dtype=float
+    )
+    predicted = float(model.predict(x_input)[0])
 
-    obs_df = pd.DataFrame([{"year": y.year, "county": y.county, "obs_yield": y.value} for y in obs_yields])
-
-    counties = sorted(obs_df["county"].unique())
-    all_sim: list[pd.DataFrame] = []
-
-    for county in counties:
-        try:
-            sim_df = simulate_yields(
-                county=county,
-                crop=req.crop,
-                start_year=start_year,
-                end_year=end_year,
-                session=session,
-                state=req.state,
-            )
-            if sim_df is not None and not sim_df.empty:
-                sim_df["county"] = county
-                all_sim.append(sim_df)
-        except Exception as exc:
-            # Log and continue — one county failure doesn't abort the run
-            import logging
-            logging.getLogger(__name__).warning(
-                "ApsimX simulation failed for %s, %s: %s", county, req.state, exc
-            )
-
-    if not all_sim:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "ApsimX produced no output for any county. "
-                "Check that APSIMX_BIN is set and the binary is executable, "
-                "and that daily weather has been ingested via POST /api/v1/ingest/trigger-daily-weather."
-            ),
-        )
-
-    sim_df_all = pd.concat(all_sim, ignore_index=True)
-
-    # ApsimX yields are in kg/ha; NASS yields are in bu/acre (corn ≈ 6.28 kg/ha per bu/acre)
-    CORN_KG_HA_PER_BU_ACRE = 62.77  # 1 bu/acre corn = 62.77 kg/ha
-    sim_df_all["sim_yield_bu_ac"] = sim_df_all["simulated_yield_kg_ha"] / CORN_KG_HA_PER_BU_ACRE
-
-    merged = obs_df.merge(sim_df_all[["year", "county", "sim_yield_bu_ac"]], on=["year", "county"], how="inner")
-
-    if len(merged) < 3:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"Only {len(merged)} matching year×county pairs between simulations and observations. "
-                "Try a broader year range or ensure weather data covers the requested period."
-            ),
-        )
-
-    y_obs = merged["obs_yield"].values
-    y_sim = merged["sim_yield_bu_ac"].values
-
-    r2 = float(r2_score(y_obs, y_sim))
-    rmse = float(np.sqrt(mean_squared_error(y_obs, y_sim)))
-
-    # For ApsimX there are no feature importances in the ML sense.
-    # Return simulation statistics as informational "importances".
-    sim_stats = [
-        FeatureImportance(feature="sim_mean_yield_bu_ac", importance=round(float(np.mean(y_sim)), 2)),
-        FeatureImportance(feature="obs_mean_yield_bu_ac", importance=round(float(np.mean(y_obs)), 2)),
-        FeatureImportance(feature="counties_simulated", importance=float(len(counties))),
-        FeatureImportance(feature="matched_county_years", importance=float(len(merged))),
-    ]
-
-    return TrainResult(
-        model_type="apsimx",
-        n_samples=len(merged),
-        n_train=len(merged),
-        n_test=0,
-        r2=round(r2, 4),
-        rmse=round(rmse, 4),
-        feature_importances=sim_stats,
-        state=req.state,
-        crop=req.crop,
-        start_year=start_year,
-        end_year=end_year,
+    return PredictResult(
+        predicted_yield=round(predicted, 2),
+        model_type=run.model_type,
+        training_r2=round(run.r2 or 0.0, 4),
+        training_rmse=round(run.rmse or 0.0, 4),
     )

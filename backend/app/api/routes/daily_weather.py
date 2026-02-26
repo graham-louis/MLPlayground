@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
 from app.core.db import get_session
-from app.models import DailyWeather, DailyWeatherPublic
+from app.db_models import DailyWeather, DailyWeatherPublic
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/daily-weather", tags=["daily-weather"])

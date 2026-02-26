@@ -105,3 +105,5 @@ docker-compose.override.yml
 .gitignore
 SCALABILITY_SKELETON.md
 SCALABILITY_OPTIONS.md
+
+artifacts/
