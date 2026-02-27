@@ -60,6 +60,7 @@ class WeatherPSA(BaseDatasource):
         Column("avg_wind_speed",             float),
     ]
 
+    # Parameters that users can specify when fetching data from this datasource
     scope_params = [
         {
             "name": "states",
@@ -68,8 +69,16 @@ class WeatherPSA(BaseDatasource):
             "placeholder": "e.g. North Carolina, Iowa",
             "default": ["North Carolina"],
         },
-        {"name": "start_year", "type": "integer", "label": "Start Year", "default": 2020},
-        {"name": "end_year",   "type": "integer", "label": "End Year",   "default": 2022},
+        {
+            "name": "start_year", 
+            "type": "integer", 
+            "label": "Start Year", 
+            "default": 2020},
+        {
+            "name": "end_year",   
+            "type": "integer", 
+            "label": "End Year",   
+            "default": 2022},
     ]
 
     def fetch(
