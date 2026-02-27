@@ -5,7 +5,10 @@ from alembic import context
 from sqlmodel import SQLModel
 
 from app.core.config import settings
-from app.db_models import Yield, Weather, Soil, DailyWeather  # noqa: F401 - needed to register models
+from app.db_models import ModelRun  # noqa: F401 - registers SQLModel metadata for model_runs table
+# Note: domain tables (yields, weather, soil, daily_weather, weather_psa) are managed
+# by the BaseDatasource plugin system — do NOT import them here or autogenerate will
+# try to drop them.
 
 config = context.config
 config.set_main_option("sqlalchemy.url", str(settings.SQLALCHEMY_DATABASE_URI))

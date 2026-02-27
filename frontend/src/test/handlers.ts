@@ -32,10 +32,10 @@ export const DAILY_WEATHER_RESPONSE = {
 
 export const DATASOURCES_RESPONSE = {
   data: [
-    { key: "yields",        label: "Crop Yields",     endpoint: "/api/v1/yields/",         columns: ["year","state","county","crop","value"], scope_params: [{ name: "states", type: "string_list", label: "States", default: ["North Carolina"] }, { name: "start_year", type: "integer", label: "Start Year", default: 1980 }, { name: "end_year", type: "integer", label: "End Year", default: 2022 }], description: "USDA NASS crop yields." },
-    { key: "weather",       label: "Annual Weather",  endpoint: "/api/v1/weather/",         columns: ["year","state","county","avg_temp"],     scope_params: [],                          description: "Daymet annual weather." },
-    { key: "soil",          label: "Soil Properties", endpoint: "/api/v1/soil/",            columns: ["state","county","ph"],                  scope_params: [],                          description: "SSURGO soil." },
-    { key: "daily_weather", label: "Daily Weather",   endpoint: "/api/v1/daily-weather/",   columns: ["year","day_of_year","date","tmax"],     scope_params: [],                          description: "Daymet daily." },
+    { key: "yields",        label: "Crop Yields",     endpoint: "/api/v1/data/yields",        columns: ["year","state","county","crop","value"], scope_params: [{ name: "states", type: "string_list", label: "States", default: ["North Carolina"] }, { name: "start_year", type: "integer", label: "Start Year", default: 1980 }, { name: "end_year", type: "integer", label: "End Year", default: 2022 }], description: "USDA NASS crop yields." },
+    { key: "weather",       label: "Annual Weather",  endpoint: "/api/v1/data/weather",       columns: ["year","state","county","avg_temp"],     scope_params: [],                          description: "Daymet annual weather." },
+    { key: "soil",          label: "Soil Properties", endpoint: "/api/v1/data/soil",          columns: ["state","county","ph"],                  scope_params: [],                          description: "SSURGO soil." },
+    { key: "daily_weather", label: "Daily Weather",   endpoint: "/api/v1/data/daily_weather", columns: ["year","day_of_year","date","tmax"],     scope_params: [],                          description: "Daymet daily." },
   ],
   count: 4,
 }
@@ -59,22 +59,22 @@ export const defaultHandlers = [
   http.get("/api/v1/utils/health-check/", () =>
     HttpResponse.json({ status: "ok" })
   ),
-  http.get("/api/v1/yields/crops", () =>
+  http.get("/api/v1/data/yields/distinct/crop", () =>
     HttpResponse.json(["CORN", "SOYBEANS", "WHEAT"])
   ),
-  http.get("/api/v1/yields/states", () =>
+  http.get("/api/v1/data/yields/distinct/state", () =>
     HttpResponse.json(["North Carolina", "Iowa", "Illinois"])
   ),
-  http.get("/api/v1/yields/", () =>
+  http.get("/api/v1/data/yields", () =>
     HttpResponse.json(YIELDS_RESPONSE)
   ),
-  http.get("/api/v1/weather/", () =>
+  http.get("/api/v1/data/weather", () =>
     HttpResponse.json(WEATHER_RESPONSE)
   ),
-  http.get("/api/v1/soil/", () =>
+  http.get("/api/v1/data/soil", () =>
     HttpResponse.json(SOIL_RESPONSE)
   ),
-  http.get("/api/v1/daily-weather/", () =>
+  http.get("/api/v1/data/daily_weather", () =>
     HttpResponse.json(DAILY_WEATHER_RESPONSE)
   ),
   http.get("/api/v1/datasources/", () =>
@@ -85,15 +85,6 @@ export const defaultHandlers = [
   ),
   http.get("/api/v1/models/", () =>
     HttpResponse.json(MODEL_RUNS_RESPONSE)
-  ),
-  http.get("/api/v1/ingest/status", () =>
-    HttpResponse.json({ status: "idle" })
-  ),
-  http.post("/api/v1/ingest/trigger", () =>
-    HttpResponse.json({ message: "Data ingestion started in background." })
-  ),
-  http.post("/api/v1/ingest/trigger-daily-weather", () =>
-    HttpResponse.json({ message: "Daily weather ingest started in background." })
   ),
   http.post("/api/v1/ingest/run", () =>
     HttpResponse.json({ job_id: "test-job-123", status: "queued", progress: 0, message: "Queued", errors: [] })

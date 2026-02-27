@@ -21,7 +21,7 @@ from sklearn.model_selection import train_test_split
 from sqlmodel import Session, select
 
 from app.core.db import get_session
-from app.db_models import ModelRun, ModelRunPublic, ModelRunsPublic, Soil, Weather, Yield
+from app.db_models import ModelRun, ModelRunPublic, ModelRunsPublic
 from pydantic import BaseModel
 
 ARTIFACTS_DIR = os.environ.get("ARTIFACTS_DIR", "/app/artifacts/models")
@@ -155,69 +155,55 @@ class PredictResult(BaseModel):
 
 
 def _load_joined_data(
-    session: Session,
     state: str,
     crop: str,
     start_year: int,
     end_year: int,
 ) -> pd.DataFrame:
     """
-    Fetches Yield, Weather, and Soil rows for the requested scope and
-    joins them on (county, state, year).  Returns a flat DataFrame.
+    Fetches Yield, Weather, and Soil rows via the BaseDatasource plugin system
+    and joins them on (county, year).  Returns a flat DataFrame.
     """
-    conditions = [
-        Yield.state == state,
-        Yield.crop == crop,
-        Yield.year >= start_year,
-        Yield.year <= end_year,
-    ]
-    yields = session.exec(select(Yield).where(*conditions)).all()
+    from app.ingest.base import BaseDatasource
 
-    if not yields:
+    yields_ds  = BaseDatasource._instances.get("yields")
+    weather_ds = BaseDatasource._instances.get("weather")
+    soil_ds    = BaseDatasource._instances.get("soil")
+
+    if not yields_ds or not weather_ds or not soil_ds:
         return pd.DataFrame()
 
-    yield_df = pd.DataFrame(
-        [{"year": y.year, "county": y.county, "state": y.state, "crop_yield": y.value} for y in yields]
-    )
+    yields_rows, _  = yields_ds.query(state=state,  limit=200_000)
+    weather_rows, _ = weather_ds.query(state=state, limit=200_000)
+    soil_rows, _    = soil_ds.query(state=state,    limit=10_000)
 
-    weather_conditions = [
-        Weather.state == state,
-        Weather.year >= start_year,
-        Weather.year <= end_year,
-    ]
-    weather_rows = session.exec(select(Weather).where(*weather_conditions)).all()
-    weather_df = pd.DataFrame(
-        [
-            {
-                "year": w.year,
-                "county": w.county,
-                "avg_temp": w.avg_temp,
-                "precipitation": w.precipitation,
-                "gdd": w.gdd,
-                "vp": w.vp,
-                "srad": w.srad,
-            }
-            for w in weather_rows
-        ]
-    )
+    if not yields_rows:
+        return pd.DataFrame()
 
-    soil_rows = session.exec(select(Soil).where(Soil.state == state)).all()
-    soil_df = pd.DataFrame(
-        [
-            {
-                "county": s.county,
-                "ph": s.ph,
-                "organic_matter": s.organic_matter,
-                "sand_pct": s.sand_pct,
-                "clay_pct": s.clay_pct,
-            }
-            for s in soil_rows
-        ]
-    )
+    yield_df = pd.DataFrame(yields_rows)
+    yield_df["year"] = pd.to_numeric(yield_df["year"], errors="coerce")
+    yield_df = yield_df[
+        (yield_df["crop"].str.upper() == crop.upper()) &
+        (yield_df["year"] >= start_year) &
+        (yield_df["year"] <= end_year)
+    ].rename(columns={"value": "crop_yield"})[["year", "county", "state", "crop_yield"]]
 
-    # Join on (county, year) then (county) for soil
-    df = yield_df.merge(weather_df, on=["year", "county"], how="left")
-    df = df.merge(soil_df, on="county", how="left")
+    if yield_df.empty:
+        return pd.DataFrame()
+
+    weather_df = pd.DataFrame(weather_rows)[
+        ["year", "county", "avg_temp", "precipitation", "gdd", "vp", "srad"]
+    ] if weather_rows else pd.DataFrame()
+
+    soil_df = pd.DataFrame(soil_rows)[
+        ["county", "ph", "organic_matter", "sand_pct", "clay_pct"]
+    ] if soil_rows else pd.DataFrame()
+
+    df = yield_df
+    if not weather_df.empty:
+        df = df.merge(weather_df, on=["year", "county"], how="left")
+    if not soil_df.empty:
+        df = df.merge(soil_df, on="county", how="left")
     return df
 
 
@@ -250,7 +236,7 @@ def train_model(
     start_year = req.start_year or 1980
     end_year = req.end_year or 2022
 
-    df = _load_joined_data(session, req.state, req.crop, start_year, end_year)
+    df = _load_joined_data(req.state, req.crop, start_year, end_year)
 
     if df.empty:
         raise HTTPException(
@@ -697,7 +683,7 @@ def predict_yield(
     if invalid:
         raise HTTPException(status_code=422, detail=f"Unknown features: {invalid}")
 
-    df = _load_joined_data(session, req.state, req.crop, train_start, train_end)
+    df = _load_joined_data(req.state, req.crop, train_start, train_end)
     if df.empty:
         raise HTTPException(
             status_code=404,

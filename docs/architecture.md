@@ -17,26 +17,27 @@ graph TB
     end
 
     subgraph API["FastAPI Backend (:8000)"]
-        RT_Yields["/api/v1/yields/"]
-        RT_Weather["/api/v1/weather/"]
-        RT_Soil["/api/v1/soil/"]
-        RT_DW["/api/v1/daily-weather/"]
+        RT_Data["/api/v1/data/{key}\nGeneric datasource query"]
+        RT_DS["/api/v1/datasources/\nRegistry metadata"]
         RT_Ingest["/api/v1/ingest/\nrun · status/{job_id}"]
         RT_Models["/api/v1/models/\ntrain · predict · runs"]
-        RT_DS["/api/v1/datasources/"]
+    end
+
+    subgraph Plugins["Datasource Plugins (ds_*.py)"]
+        DS_Yields["ds_yields.py\ntable: yields"]
+        DS_Weather["ds_weather.py\ntable: weather"]
+        DS_DW["ds_daily_weather.py\ntable: daily_weather"]
+        DS_Soil["ds_soil.py\ntable: soil"]
     end
 
     subgraph DB["PostgreSQL"]
-        T_Yields[(yields)]
-        T_Weather[(weather)]
-        T_Soil[(soil)]
-        T_DW[(daily_weather)]
-        T_Runs[(model_runs)]
+        T_Plugin[("Plugin-managed tables\nyields · weather · soil\ndaily_weather · ...")]
+        T_Runs[(model_runs\nAlembic-managed)]
     end
 
     subgraph Ext["External APIs"]
         NASS["USDA NASS\nCrop yields"]
-        NLDAS["NASA NLDAS-2\nWeather"]
+        Daymet["NASA Daymet\nWeather"]
         SSURGO["USDA SSURGO\nSoil"]
     end
 
@@ -45,28 +46,33 @@ graph TB
     end
 
     Browser -->|REST/JSON| API
-    API --> DB
+    RT_Data --> Plugins
+    RT_DS --> Plugins
+    Plugins --> DB
     RT_Ingest -->|HTTP fetch| Ext
     RT_Models -->|save/load| Artifacts
+    RT_Models --> DB
 
     classDef frontend fill:#3b82f6,color:#fff,stroke:#1d4ed8
     classDef api fill:#6366f1,color:#fff,stroke:#4338ca
+    classDef plugin fill:#0d9488,color:#fff,stroke:#0f766e
     classDef db fill:#d97706,color:#fff,stroke:#b45309
     classDef ext fill:#ea580c,color:#fff,stroke:#c2410c
     classDef artifact fill:#475569,color:#fff,stroke:#334155
 
     class UI_Explore,UI_Ingest,UI_Model frontend
-    class RT_Yields,RT_Weather,RT_Soil,RT_DW,RT_Ingest,RT_Models,RT_DS api
-    class T_Yields,T_Weather,T_Soil,T_DW,T_Runs db
-    class NASS,NLDAS,SSURGO ext
+    class RT_Data,RT_DS,RT_Ingest,RT_Models api
+    class DS_Yields,DS_Weather,DS_DW,DS_Soil plugin
+    class T_Plugin,T_Runs db
+    class NASS,Daymet,SSURGO ext
     class PKL artifact
 
     style Browser fill:#dbeafe,stroke:#93c5fd,color:#1e3a8a
     style API fill:#e0e7ff,stroke:#a5b4fc,color:#312e81
+    style Plugins fill:#ccfbf1,stroke:#5eead4,color:#134e4a
     style DB fill:#fef3c7,stroke:#fcd34d,color:#78350f
     style Ext fill:#ffedd5,stroke:#fed7aa,color:#7c2d12
     style Artifacts fill:#f1f5f9,stroke:#cbd5e1,color:#1e293b
-    style Sim fill:#ffe4e6,stroke:#fecdd3,color:#881337
 ```
 
 ---
@@ -123,57 +129,11 @@ sequenceDiagram
 
 ## 3. Database Schema
 
+`model_runs` is the only Alembic-managed table. All datasource tables (yields, weather, etc.) are **plugin-managed** — created lazily by `BaseDatasource._get_table()` on first use. They do not appear in `db_models.py` and have no Alembic migrations.
+
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#fef3c7', 'primaryBorderColor': '#d97706', 'primaryTextColor': '#78350f', 'lineColor': '#6b7280', 'attributeBackgroundColorEven': '#fffbeb', 'attributeBackgroundColorOdd': '#fef9c3'}}}%%
 erDiagram
-    YIELDS {
-        int     id          PK
-        string  state
-        string  county
-        string  crop
-        int     year
-        float   value
-        string  unit
-    }
-
-    WEATHER {
-        int     id          PK
-        string  state
-        string  county
-        int     year
-        int     month
-        float   avg_temp
-        float   precipitation
-    }
-
-    SOIL {
-        int     id          PK
-        string  state
-        string  county
-        float   ph
-        float   organic_matter
-        float   sand_pct
-        float   silt_pct
-        float   clay_pct
-        float   cec
-        float   water_capacity
-    }
-
-    DAILY_WEATHER {
-        int     id          PK
-        string  state
-        string  county
-        int     year
-        int     month
-        int     day
-        float   tmax
-        float   tmin
-        float   precip
-        float   srad
-        float   vp
-        float   wind
-    }
-
     MODEL_RUNS {
         string  run_id      PK
         string  model_type
@@ -192,50 +152,51 @@ erDiagram
         datetime created_at
     }
 
-    YIELDS ||--o{ MODEL_RUNS : "trained on"
-    WEATHER ||--o{ MODEL_RUNS : "trained on"
-    SOIL ||--o{ MODEL_RUNS : "trained on"
-    DAILY_WEATHER ||--o{ MODEL_RUNS : "trained on"
+    PLUGIN_TABLES["Plugin-Managed Tables\n(schema from ds_*.py columns)"] {
+        string  key
+        string  columns     "Defined by BaseDatasource subclass"
+        string  table_name  "e.g. yields, weather, soil, daily_weather"
+        string  created_by  "BaseDatasource._get_table() on first upsert"
+    }
 ```
 
 ---
 
-## 4. Datasource Registry — Adding a New Data Source
+## 4. Datasource Plugin System — Adding a New Data Source
 
-Step-by-step process to register a new datasource so it appears automatically in the Explorer and Ingest pages.
+All datasource functionality — table creation, API endpoint, Explore tab, Ingest selector — is handled by creating a single `ds_*.py` file.
 
 ```mermaid
 flowchart TD
-    A[Create ingest module\nbackend/app/ingest/my_source.py] --> B[Implement fetch_and_transform\nReturns pandas DataFrame]
-    B --> C[Implement save_to_db\nUpserts rows via SQLAlchemy]
-    C --> D[Add SQLModel table\nbackend/app/models.py]
-    D --> E[Create Alembic migration\nalembic revision --autogenerate]
-    E --> F[Add FastAPI router\nbackend/app/api/routes/my_source.py]
-    F --> G[Register with DatasourceRegistry\nDATASOURCE_REGISTRY.register in registry.py]
-    G --> H[Include router in main.py]
-    H --> I[Frontend auto-detects\nExplore tabs and Ingest scope\ndriven by /api/v1/datasources/]
+    A["Copy template\ncp template_datasource.py ds_my_source.py"] --> B["Set identity\nkey, label, description"]
+    B --> C["Define schema\nColumn('name', type) list"]
+    C --> D["Set scope_params\n(optional defaults)"]
+    D --> E["Implement fetch()\nCall API → return DataFrame"]
+    E --> F["Save file in\nbackend/app/ingest/ds_my_source.py"]
+    F --> G["Restart backend\n(auto-discovery imports ds_*.py)"]
+    G --> H["BaseDatasource.__init_subclass__\nauto-registers in DATASOURCE_REGISTRY\nauto-creates DB table on first use"]
+    H --> I["Frontend auto-detects\nExplore tab + Ingest selector\ndriven by /api/v1/datasources/"]
+    H --> J["GET /api/v1/data/my_source\navailable immediately"]
 
-    classDef ingest fill:#0d9488,color:#fff,stroke:#0f766e
-    classDef db fill:#d97706,color:#fff,stroke:#b45309
-    classDef api fill:#6366f1,color:#fff,stroke:#4338ca
-    classDef frontend fill:#3b82f6,color:#fff,stroke:#1d4ed8
+    classDef user fill:#3b82f6,color:#fff,stroke:#1d4ed8
+    classDef framework fill:#0d9488,color:#fff,stroke:#0f766e
+    classDef frontend fill:#6366f1,color:#fff,stroke:#4338ca
 
-    class A,B,C ingest
-    class D,E db
-    class F,G,H api
-    class I frontend
+    class A,B,C,D,E,F user
+    class G,H framework
+    class I,J frontend
 ```
 
-### Registry Entry Fields
+### Registry Entry Fields (set on the `BaseDatasource` subclass)
 
 | Field | Purpose |
 |-------|---------|
-| `key` | Unique identifier (e.g. `"yields"`) |
-| `label` | Human-readable name shown in tabs |
-| `endpoint` | API path for fetching data (e.g. `"/api/v1/yields/"`) |
-| `columns` | Column definitions `{name, type}` shown in Explorer table headers |
+| `key` | Unique identifier (e.g. `"yields"`) — also the URL slug (`/api/v1/data/yields`) |
+| `label` | Human-readable name shown in Explore tabs and Ingest selector |
+| `description` | Tooltip text shown in the Explorer tab |
+| `columns` | `Column("name", type)` list — defines the DB table schema and Explorer headers |
 | `scope_params` | Filter inputs rendered in Ingest UI (state, year range, etc.) |
-| `description` | Tooltip text shown in Explorer tab |
+| `endpoint` | **Auto-set** to `/api/v1/data/<key>` — never set manually |
 
 ---
 
@@ -243,38 +204,30 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[Choose model kind:\nsklearn / pytorch / simulation] --> B{Kind}
+    A[Choose model kind:\nsklearn / pytorch] --> B{Kind}
 
-    B -->|sklearn| C[Add entry to MODEL_REGISTRY dict\nin backend/app/api/routes/models.py]
-    B -->|pytorch| D[Implement train_lstm in\nbackend/app/ingest/lstm_trainer.py]
-    B -->|simulation| E[Implement runner in\nbackend/app/ingest/my_simulator.py]
+    B -->|sklearn| C[Add entry to MODEL_REGISTRY dict\nin backend/app/api/routes/training.py]
+    B -->|pytorch| D[Implement custom training loop\ne.g. LSTM in training.py]
 
     C --> F[Add elif branch in /train endpoint\nfit model, compute metrics]
     D --> F
-    E --> F
 
-    F --> G{supports_predict?}
-    G -->|Yes| H[joblib.dump artifact\nInsert model_runs row]
-    G -->|No - simulation| I[Return metrics only\nrun_id = None]
+    F --> G[joblib.dump artifact\nInsert model_runs row]
 
-    H --> J[Frontend shows model in\ndropdown and Saved Models tab]
-    I --> J
-
-    J --> K[Predict endpoint\nGET /api/v1/models/types auto-includes it]
+    G --> H[Frontend shows model in\ndropdown and Saved Models tab]
+    H --> I[GET /api/v1/models/types auto-includes it]
 
     classDef decision fill:#f8fafc,color:#1e293b,stroke:#94a3b8
     classDef api fill:#6366f1,color:#fff,stroke:#4338ca
     classDef ml fill:#16a34a,color:#fff,stroke:#15803d
-    classDef sim fill:#e11d48,color:#fff,stroke:#be123c
     classDef artifact fill:#475569,color:#fff,stroke:#334155
     classDef frontend fill:#3b82f6,color:#fff,stroke:#1d4ed8
 
     class B,G decision
     class A,F api
     class C,D ml
-    class E sim
-    class H,I artifact
-    class J,K frontend
+    class G artifact
+    class H,I frontend
 ```
 
 ---

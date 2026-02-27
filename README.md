@@ -2,7 +2,7 @@
 
 **An extensible, researcher-friendly platform for tabular machine learning.**
 
-MLPlayground is a digital data warehouse and modelling hub for tabular datasets. It ships with a working agriculture example domain (US crop yields, weather, soil) but is **fully domain-agnostic** — any tabular dataset can be plugged in with minimal code. Adding a new data source or ML model should not require touching the frontend.
+MLPlayground is a digital data warehouse and modelling hub for tabular datasets. It ships with a working agriculture example domain (US crop yields, weather, soil) but is **fully domain-agnostic** — any tabular dataset can be plugged in by creating a single file. Adding a new data source or ML model does not require touching the frontend.
 
 Built on the [tiangolo full-stack FastAPI template](https://github.com/tiangolo/full-stack-fastapi-template).
 
@@ -98,30 +98,33 @@ MLPlayground/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py              # FastAPI app entry point
-│   │   ├── db_models.py         # SQLModel table definitions (DB schema)
+│   │   ├── db_models.py         # SQLModel definitions — ModelRun only
+│   │   │                        # (domain tables are plugin-managed, not here)
 │   │   ├── core/
 │   │   │   ├── config.py        # Pydantic Settings (env vars)
 │   │   │   └── db.py            # Engine + get_session dependency
 │   │   ├── api/
-│   │   │   ├── main.py          # Router aggregator
+│   │   │   ├── main.py          # Router aggregator + plugin auto-discovery
 │   │   │   └── routes/
+│   │   │       ├── data.py          # GET /api/v1/data/{key}  (generic, all sources)
+│   │   │       │                    # GET /api/v1/data/{key}/distinct/{column}
 │   │   │       ├── datasources.py   # GET /api/v1/datasources/
 │   │   │       ├── ingest.py        # POST /api/v1/ingest/run
 │   │   │       ├── training.py      # POST /api/v1/models/train  /predict  GET /
-│   │   │       ├── yields.py        # Example domain: crop yields
-│   │   │       ├── weather.py       # Example domain: annual weather
-│   │   │       ├── daily_weather.py # Example domain: daily weather
-│   │   │       ├── soil.py          # Example domain: soil
 │   │   │       └── utils.py         # Health check
 │   │   ├── ingest/
-│   │   │   ├── runner.py            # Orchestrates bulk ingest
+│   │   │   ├── base.py              # BaseDatasource ABC + auto-registration framework
 │   │   │   ├── registry.py          # DATASOURCE_REGISTRY singleton
-│   │   │   ├── template_datasource.py  # Copy-paste template for new sources
-│   │   │   ├── yields_nass.py       # USDA NASS yield fetcher
-│   │   │   ├── weather_daymet.py    # Daymet annual weather fetcher
-│   │   │   ├── daily_weather_utils.py # Daily weather DB persistence helpers
-│   │   │   └── soil_ssurgo.py       # SSURGO soil fetcher
-│   │   └── alembic/versions/        # DB migrations (001 → 003)
+│   │   │   ├── runner.py            # Bulk ingest CLI (iterates all plugins)
+│   │   │   ├── template_datasource.py  # Copy-paste template — start here
+│   │   │   ├── _daymet_helpers.py   # Private: shared Daymet/SSURGO helpers
+│   │   │   ├── ds_yields.py         # USDA NASS crop yields plugin
+│   │   │   ├── ds_weather.py        # Daymet annual weather plugin
+│   │   │   ├── ds_daily_weather.py  # Daymet daily weather plugin
+│   │   │   ├── ds_soil.py           # SSURGO soil properties plugin
+│   │   │   └── ds_weather_psa.py    # PSA daily weather plugin (example)
+│   │   └── alembic/versions/        # DB migrations (001 → 004)
+│   │                                # 004 drops domain tables (now plugin-managed)
 │   ├── Dockerfile
 │   └── pyproject.toml
 ├── frontend/
@@ -148,7 +151,9 @@ All endpoints are prefixed with `/api/v1`.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/datasources/` | List all registered datasources with metadata |
-| `POST` | `/models/train` | Train a model (linear, random forest, gradient boosting, LSTM) |
+| `GET` | `/data/{key}` | Query any registered datasource (state, county, year, skip, limit) |
+| `GET` | `/data/{key}/distinct/{column}` | Distinct values for a column (used for dropdowns) |
+| `POST` | `/models/train` | Train a model (linear, random forest, gradient boosting, LSTM, AutoML) |
 | `POST` | `/models/predict` | Run prediction with a saved model |
 | `GET` | `/models/` | List all saved model runs |
 | `GET` | `/models/types` | List available model types |
@@ -156,37 +161,40 @@ All endpoints are prefixed with `/api/v1`.
 | `GET` | `/ingest/status/{job_id}` | Poll ingestion job status |
 | `GET` | `/utils/health-check/` | Liveness probe |
 
-**Example domain routes:**
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/yields/` | Crop yields (params: `state`, `crop`, `start_year`, `end_year`) |
-| `GET` | `/weather/` | Annual weather (params: `state`, `county`, `year`) |
-| `GET` | `/daily-weather/` | Daily weather (params: `state`, `county`, `start_date`, `end_date`) |
-| `GET` | `/soil/` | Soil properties (params: `state`, `county`) |
-
 Interactive documentation: **http://localhost:8000/docs**
 
 ---
 
 ## Adding a New Data Source
 
-1. Copy the template: `cp backend/app/ingest/template_datasource.py backend/app/ingest/my_source.py`
-2. Fill in `DATASOURCE_NAME`, `DATASOURCE_COLUMNS`, `SCOPE_PARAMS`, and implement `fetch_data(**scope) -> pd.DataFrame`.
-3. Add a SQLModel table to `backend/app/db_models.py` (column names must match `DATASOURCE_COLUMNS`).
-4. Create an Alembic migration: `docker compose exec backend alembic revision --autogenerate -m "add my_source"`.
-5. Register with the registry by calling `DATASOURCE_REGISTRY.register(...)` at module import time.
-6. Add an API route in `backend/app/api/routes/` and register it in `backend/app/api/main.py`.
+Adding a new data source requires **exactly one file**. No database migrations, no route files, no registry edits.
 
-The Explore page gains a new tab and the Ingest page gains the new source as a selectable option — **no frontend changes required**.
+```sh
+cp backend/app/ingest/template_datasource.py backend/app/ingest/ds_my_source.py
+```
+
+Open `ds_my_source.py` and fill in the four `# TODO` sections:
+
+1. **Identity** — set `key`, `label`, `description` on the class
+2. **Schema** — list your `Column("name", type)` entries
+3. **Scope params** — adjust the ingest form defaults (optional)
+4. **`fetch()` method** — call your API, return a DataFrame
+
+That's it. The framework automatically:
+- Creates the backing database table on first use (no Alembic needed)
+- Registers the source in the UI (Explore tab + Ingest selector)
+- Exposes `GET /api/v1/data/<key>` and `GET /api/v1/data/<key>/distinct/<column>`
+- Wires up the ingest pipeline so the source can be ingested via `/ingest/run`
+
+See `backend/app/ingest/ds_weather_psa.py` for a complete real-world example.
 
 ---
 
 ## Adding a New ML Model Type
 
-1. Extend `MODEL_TYPES` Literal and add an entry to `MODEL_REGISTRY` in `backend/app/api/routes/training.py`.
-2. Add an `elif model_type == "my_model":` branch in the `train` endpoint that accepts `(X_train, y_train)`, fits, evaluates on `(X_test, y_test)`, and returns `feature_importances`.
-3. The model type dropdown in the frontend discovers types from `/api/v1/models/types` automatically.
+1. Add an entry to `MODEL_REGISTRY` and extend `MODEL_TYPES` in `backend/app/api/routes/training.py`.
+2. Add an `elif model_type == "my_model":` branch in the `train` endpoint that accepts `(X_train, y_train)`, fits, evaluates, and returns `feature_importances`.
+3. The model type dropdown discovers types from `/api/v1/models/types` automatically.
 
 ---
 
@@ -195,4 +203,4 @@ The Explore page gains a new tab and the Ingest page gains the new source as a s
 1. **Domain-agnostic** — the platform works identically for any tabular dataset.
 2. **Data-driven UI** — the frontend reflects the datasource registry with zero manual wiring.
 3. **Transparent** — every step from data fetching to model prediction is inspectable.
-4. **Minimal friction** — adding a new source or model touches the fewest files possible.
+4. **Minimal friction** — adding a new source requires one file; adding a new model type requires one dict entry and one code branch.

@@ -150,7 +150,7 @@ function useModelConfig() {
   const { data: crops = [] } = useQuery<string[]>({
     queryKey: ["crops", state],
     queryFn: () =>
-      axios.get("/api/v1/yields/crops", { params: { state } }).then((r) => r.data),
+      axios.get("/api/v1/data/yields/distinct/crop", { params: { state } }).then((r) => r.data),
     enabled: !!state,
   })
 

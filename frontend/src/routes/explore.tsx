@@ -278,7 +278,7 @@ function ExplorePage() {
   const { data: cropsData } = useQuery({
     queryKey: ["crops", state],
     queryFn: () =>
-      axios.get("/api/v1/yields/crops", { params: { state } }).then((r) => r.data as string[]),
+      axios.get("/api/v1/data/yields/distinct/crop", { params: { state } }).then((r) => r.data as string[]),
     enabled: !!state,
   })
 

@@ -94,7 +94,7 @@ describe("Data Explorer – loading data", () => {
 
   it("shows a loading spinner while fetching", async () => {
     server.use(
-      http.get("/api/v1/yields/", async () => {
+      http.get("/api/v1/data/yields", async () => {
         await new Promise((resolve) => setTimeout(resolve, 100))
         return HttpResponse.json(YIELDS_RESPONSE)
       })
@@ -109,7 +109,7 @@ describe("Data Explorer – loading data", () => {
 
   it("shows empty state alert when API returns no data", async () => {
     server.use(
-      http.get("/api/v1/yields/", () => HttpResponse.json({ data: [], count: 0 }))
+      http.get("/api/v1/data/yields", () => HttpResponse.json({ data: [], count: 0 }))
     )
     const user = userEvent.setup()
     renderWithProviders(<ExplorePage />)
@@ -125,7 +125,7 @@ describe("Data Explorer – loading data", () => {
 
   it("triggers ingestion when button is clicked", async () => {
     server.use(
-      http.get("/api/v1/yields/", () => HttpResponse.json({ data: [], count: 0 }))
+      http.get("/api/v1/data/yields", () => HttpResponse.json({ data: [], count: 0 }))
     )
     const user = userEvent.setup()
     renderWithProviders(<ExplorePage />)
@@ -154,7 +154,7 @@ describe("Data Explorer – loading data", () => {
 
   it("shows Ingest Daily Weather button when daily weather tab is empty", async () => {
     server.use(
-      http.get("/api/v1/daily-weather/", () => HttpResponse.json({ data: [], count: 0 }))
+      http.get("/api/v1/data/daily_weather", () => HttpResponse.json({ data: [], count: 0 }))
     )
     const user = userEvent.setup()
     renderWithProviders(<ExplorePage />)
