@@ -68,9 +68,9 @@ const GraphPage = Route.options.component as React.ComponentType
 async function loadCsvTemplate(user: ReturnType<typeof userEvent.setup>) {
   await waitFor(() => expect(screen.getByRole("button", { name: /Templates/i })).toBeInTheDocument())
   await user.click(screen.getByRole("button", { name: /Templates/i }))
-  await waitFor(() => expect(screen.getByText(/CSV → Filter → Preview/)).toBeInTheDocument())
-  await user.click(screen.getByText(/CSV → Filter → Preview/))
-  await waitFor(() => expect(screen.getByText(/3 nodes/)).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByText(/CSV → Filter/)).toBeInTheDocument())
+  await user.click(screen.getByText(/CSV → Filter/))
+  await waitFor(() => expect(screen.getByText(/2 nodes/)).toBeInTheDocument())
 }
 
 // ── Helper: load the yield prediction template ──
@@ -79,7 +79,7 @@ async function loadYieldTemplate(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: /Templates/i }))
   await waitFor(() => expect(screen.getByText(/Yield Prediction/)).toBeInTheDocument())
   await user.click(screen.getByText(/Yield Prediction/))
-  await waitFor(() => expect(screen.getByText(/9 nodes/)).toBeInTheDocument())
+  await waitFor(() => expect(screen.getByText(/8 nodes/)).toBeInTheDocument())
 }
 
 // ── Structure ──────────────────────────────────────────────────────────────
@@ -106,8 +106,8 @@ describe("Graph page – structure", () => {
     const user = userEvent.setup()
     renderWithProviders(<GraphPage />)
     await loadCsvTemplate(user)
-    expect(screen.getByText(/3 nodes/)).toBeInTheDocument()
-    expect(screen.getByText(/2 edges/)).toBeInTheDocument()
+    expect(screen.getByText(/2 nodes/)).toBeInTheDocument()
+    expect(screen.getByText(/1 edge/)).toBeInTheDocument()
   })
 
   it("toolbar has auto-layout, save, and workflows buttons", async () => {
@@ -158,15 +158,15 @@ describe("Graph page – templates", () => {
     renderWithProviders(<GraphPage />)
     await waitFor(() => expect(screen.getByRole("button", { name: /Templates/i })).toBeInTheDocument())
     await user.click(screen.getByRole("button", { name: /Templates/i }))
-    await waitFor(() => expect(screen.getByText(/CSV → Filter → Preview/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/CSV → Filter/)).toBeInTheDocument())
   })
 
-  it("loads CSV template: places 3 nodes and 2 edges on the canvas", async () => {
+  it("loads CSV template: places 2 nodes and 1 edge on the canvas", async () => {
     const user = userEvent.setup()
     renderWithProviders(<GraphPage />)
     await loadCsvTemplate(user)
-    expect(screen.getByText(/3 nodes/)).toBeInTheDocument()
-    expect(screen.getByText(/2 edges/)).toBeInTheDocument()
+    expect(screen.getByText(/2 nodes/)).toBeInTheDocument()
+    expect(screen.getByText(/1 edge/)).toBeInTheDocument()
     // Empty state hint should disappear once nodes are present
     expect(screen.queryByText(/Drag nodes from the palette/)).not.toBeInTheDocument()
   })
@@ -254,7 +254,7 @@ describe("Graph page – auto-layout", () => {
     await loadCsvTemplate(user)
     await user.click(screen.getByText(/Layout/))
     // Canvas should still show the node/edge counts
-    await waitFor(() => expect(screen.getByText(/3 nodes/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/2 nodes/)).toBeInTheDocument())
   })
 })
 
@@ -395,7 +395,7 @@ describe("Graph page – CSV template param regression", () => {
 // ── RunResultView rendering ────────────────────────────────────────────────
 
 describe("Graph page – RunResultView", () => {
-  it("renders PreviewTable when result slot has {rows: [...]}", async () => {
+  it("renders '▸ Show preview' toggle for DataFrame outputs with embedded rows", async () => {
     const user = userEvent.setup()
     server.use(
       http.post("/api/v1/graphs/run", () => HttpResponse.json(GRAPH_RUN_RESPONSE)),
@@ -405,11 +405,31 @@ describe("Graph page – RunResultView", () => {
     renderWithProviders(<GraphPage />)
     await loadCsvTemplate(user)
     await user.click(screen.getByText("▶ Run"))
-    // Wait for result — should show preview table rows
     await waitFor(
-      () => expect(screen.getByText(/col1/i)).toBeInTheDocument(),
+      () => expect(screen.getAllByText(/Show preview/).length).toBeGreaterThan(0),
       { timeout: 5000 },
     )
+  })
+
+  it("expanding preview toggle changes button label to 'Hide preview'", async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post("/api/v1/graphs/run", () => HttpResponse.json(GRAPH_RUN_RESPONSE)),
+      http.get("/api/v1/graphs/:runId/status", () => HttpResponse.json(GRAPH_STATUS_RESPONSE)),
+      http.get("/api/v1/graphs/:runId/result", () => HttpResponse.json(GRAPH_RESULT_RESPONSE)),
+    )
+    renderWithProviders(<GraphPage />)
+    await loadCsvTemplate(user)
+    await user.click(screen.getByText("▶ Run"))
+    // Wait for the toggle button to appear then click it
+    await waitFor(
+      () => expect(screen.getAllByText(/Show preview/).length).toBeGreaterThan(0),
+      { timeout: 5000 },
+    )
+    const toggles = screen.getAllByText(/Show preview/)
+    await user.click(toggles[0])
+    // Button label should flip to "Hide preview"
+    await waitFor(() => expect(screen.getByText(/Hide preview/)).toBeInTheDocument())
   })
 
   it("renders 'X rows × Y cols' label for DataFrame outputs", async () => {
@@ -440,12 +460,12 @@ describe("Graph page – Yield Prediction template", () => {
     await waitFor(() => expect(screen.getByText(/Yield Prediction/)).toBeInTheDocument())
   })
 
-  it("loads Yield Prediction template: places 9 nodes and 8 edges on the canvas", async () => {
+  it("loads Yield Prediction template: places 8 nodes and 7 edges on the canvas", async () => {
     const user = userEvent.setup()
     renderWithProviders(<GraphPage />)
     await loadYieldTemplate(user)
-    expect(screen.getByText(/9 nodes/)).toBeInTheDocument()
-    expect(screen.getByText(/8 edges/)).toBeInTheDocument()
+    expect(screen.getByText(/8 nodes/)).toBeInTheDocument()
+    expect(screen.getByText(/7 edges/)).toBeInTheDocument()
   })
 
   it("POST /run payload for Yield Prediction template contains correct node types", async () => {
@@ -462,8 +482,8 @@ describe("Graph page – Yield Prediction template", () => {
     await user.click(screen.getByText("▶ Run"))
     await waitFor(() => expect(capturedBody).not.toBeNull())
     const body = capturedBody as { nodes: { instance_id: string; node_type: string; params: Record<string, unknown> }[]; edges: unknown[] }
-    // Should have 9 nodes total
-    expect(body.nodes).toHaveLength(9)
+    // Should have 8 nodes total (no preview node)
+    expect(body.nodes).toHaveLength(8)
     // Source nodes should use database_source
     const sourceNodes = body.nodes.filter(n => n.node_type === "database_source")
     expect(sourceNodes).toHaveLength(3)
@@ -481,10 +501,10 @@ describe("Graph page – Yield Prediction template", () => {
     // select_columns and drop_na
     expect(body.nodes.some(n => n.node_type === "select_columns")).toBe(true)
     expect(body.nodes.some(n => n.node_type === "drop_na")).toBe(true)
-    // preview
-    expect(body.nodes.some(n => n.node_type === "preview")).toBe(true)
-    // 8 edges
-    expect(body.edges).toHaveLength(8)
+    // No preview node
+    expect(body.nodes.some(n => n.node_type === "preview")).toBe(false)
+    // 7 edges
+    expect(body.edges).toHaveLength(7)
   })
 
   it("join nodes in yield template have correct 'on' params", async () => {

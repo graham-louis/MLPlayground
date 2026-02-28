@@ -48,7 +48,15 @@ class FilterNode(BaseNode):
             ">=": lambda a, b: a >= b,
             "<=": lambda a, b: a <= b,
         }
-        mask = ops[params.operator](df[params.column], params.value)
+        # Try to cast value to the column's dtype
+        val = params.value
+        col_series = df[params.column]
+        try:
+            val = pd.Series([val]).astype(col_series.dtype).iloc[0]
+        except (ValueError, TypeError):
+            pass  # keep as is if cast fails
+
+        mask = ops[params.operator](col_series, val)
         return {"dataframe": df[mask].reset_index(drop=True)}
 
 

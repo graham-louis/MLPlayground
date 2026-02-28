@@ -22,8 +22,18 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-ARTIFACTS_BASE: str = os.environ.get("ARTIFACTS_BASE", "/app/artifacts")
-_CACHE_DIR: str = os.path.join(ARTIFACTS_BASE, "cache")
+
+def _artifacts_base() -> str:
+    """Return the configured artifacts root, read lazily to avoid import-time issues."""
+    try:
+        from app.core.config import settings
+        return settings.ARTIFACTS_BASE
+    except Exception:  # pragma: no cover
+        return os.environ.get("ARTIFACTS_BASE", "/app/artifacts")
+
+
+def _cache_dir() -> str:
+    return os.path.join(_artifacts_base(), "cache")
 
 
 # ---------------------------------------------------------------------------
@@ -137,23 +147,33 @@ def _serialize_value(value: Any, run_id: str, instance_id: str, slot: str) -> An
     """Convert a node output to a JSON-serializable form.
 
     DataFrames are written to parquet in artifacts/cache/ and replaced with a
-    reference dict.  sklearn-compatible models are written with joblib.
+    reference dict that also embeds the first 20 rows for inline preview.
+    sklearn-compatible models are written with joblib.
     Everything else is returned unchanged (must already be JSON-serializable).
     """
     try:
         import pandas as pd
         if isinstance(value, pd.DataFrame):
-            os.makedirs(_CACHE_DIR, exist_ok=True)
-            path = os.path.join(_CACHE_DIR, f"{run_id}__{instance_id}__{slot}.parquet")
+            cache_dir = _cache_dir()
+            os.makedirs(cache_dir, exist_ok=True)
+            path = os.path.join(cache_dir, f"{run_id}__{instance_id}__{slot}.parquet")
             value.to_parquet(path, index=False)
-            return {"__type__": "dataframe", "path": path, "shape": list(value.shape)}
+            preview_rows = value.head(20).to_dict(orient="records")
+            return {
+                "__type__": "dataframe",
+                "path": path,
+                "shape": list(value.shape),
+                "columns": list(value.columns),
+                "preview_rows": preview_rows,
+            }
     except ImportError:
         pass
 
     if hasattr(value, "predict") and hasattr(value, "fit"):
         import joblib
-        os.makedirs(_CACHE_DIR, exist_ok=True)
-        path = os.path.join(_CACHE_DIR, f"{run_id}__{instance_id}__{slot}.pkl")
+        cache_dir = _cache_dir()
+        os.makedirs(cache_dir, exist_ok=True)
+        path = os.path.join(cache_dir, f"{run_id}__{instance_id}__{slot}.pkl")
         joblib.dump(value, path)
         return {"__type__": "model", "path": path}
 

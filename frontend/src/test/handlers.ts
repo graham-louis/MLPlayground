@@ -191,26 +191,40 @@ export const GRAPH_NODES_RESPONSE: {
   },
 ]
 
-export const GRAPH_VALIDATE_RESPONSE = { valid: true, node_count: 3, edge_count: 2, ordered_node_ids: ["n1", "n2", "n3"] }
+export const GRAPH_VALIDATE_RESPONSE = { valid: true, node_count: 2, edge_count: 1, ordered_node_ids: ["n1", "n2"] }
 
 export const GRAPH_RUN_RESPONSE = { run_id: "test-run-001", status: "pending" }
 
 export const GRAPH_STATUS_RESPONSE = {
   run_id: "test-run-001",
   status: "done",
-  node_statuses: { n1: "done", n2: "done", n3: "cached" },
+  node_statuses: { n1: "done", n2: "done" },
 }
 
 export const GRAPH_RESULT_RESPONSE = {
   run_id: "test-run-001",
   status: "done",
   result: {
-    n3: {
-      preview: { rows: [{ col1: "a", col2: 1 }, { col1: "b", col2: 2 }], columns: ["col1", "col2"] },
-      dataframe: { __type__: "dataframe", shape: [2, 2], path: "/tmp/test.parquet" },
+    n1: {
+      dataframe: {
+        __type__: "dataframe",
+        shape: [30, 8],
+        path: "/tmp/n1.parquet",
+        columns: ["col1", "col2"],
+        preview_rows: [{ col1: "a", col2: 1 }, { col1: "b", col2: 2 }],
+      },
+    },
+    n2: {
+      dataframe: {
+        __type__: "dataframe",
+        shape: [2, 2],
+        path: "/tmp/n2.parquet",
+        columns: ["col1", "col2"],
+        preview_rows: [{ col1: "a", col2: 1 }, { col1: "b", col2: 2 }],
+      },
     },
   },
-  node_statuses: { n1: "done", n2: "done", n3: "done" },
+  node_statuses: { n1: "done", n2: "done" },
 }
 
 export const DATASOURCE_KEYS_RESPONSE = ["yields", "weather", "soil", "daily_weather"]

@@ -2,6 +2,7 @@ import {
   Badge,
   Box,
   Button,
+  Collapse,
   Divider,
   Flex,
   FormControl,
@@ -125,9 +126,11 @@ type GraphFlowNode = Node<GraphNodeData>
 
 interface RunStatus {
   run_id: string
-  status: "pending" | "running" | "done" | "error"
+  status: "pending" | "running" | "success" | "error"
   node_statuses?: Record<string, string>
   error?: string
+  created_at?: string
+  updated_at?: string
 }
 
 interface ContextMenuState {
@@ -147,7 +150,7 @@ interface RunResult {
 // These seed the canvas with a small pre-built graph to help users get started.
 
 const TEMPLATES: Record<string, { nodes: GraphFlowNode[]; edges: Edge[] }> = {
-  "CSV → Filter → Preview": {
+  "CSV → Filter": {
     nodes: [
       {
         id: "n1",
@@ -156,7 +159,7 @@ const TEMPLATES: Record<string, { nodes: GraphFlowNode[]; edges: Edge[] }> = {
         data: {
           nodeInfo: {
             node_id: "csv_source", display_name: "CSV Source", category: "Sources",
-            endpoint: "", description: "Load CSV", inputs: [], outputs: ["df"],
+            endpoint: "", description: "Load CSV", inputs: [], outputs: ["dataframe"],
             params: [], params_schema: {
               properties: { file_path: { type: "string", title: "File Path", default: "/app/data/sample.csv" } },
               required: ["file_path"],
@@ -172,38 +175,22 @@ const TEMPLATES: Record<string, { nodes: GraphFlowNode[]; edges: Edge[] }> = {
         data: {
           nodeInfo: {
             node_id: "filter", display_name: "Filter", category: "Transforms",
-            endpoint: "", description: "Filter rows", inputs: ["df"], outputs: ["df"],
+            endpoint: "", description: "Filter rows", inputs: ["dataframe"], outputs: ["dataframe"],
             params: [], params_schema: {
               properties: {
                 column: { type: "string", title: "Column" },
-                op: { type: "string", title: "Operator", enum: ["==", "!=", ">", "<", ">=", "<="] },
+                operator: { type: "string", title: "Operator", enum: ["==", "!=", ">", "<", ">=", "<="] },
                 value: { type: "string", title: "Value" },
               },
-              required: ["column", "op", "value"],
+              required: ["column", "operator", "value"],
             },
           },
-          params: { column: "year", op: ">", value: "2010" },
-        },
-      },
-      {
-        id: "n3",
-        type: "graphNode",
-        position: { x: 550, y: 150 },
-        data: {
-          nodeInfo: {
-            node_id: "preview", display_name: "Preview", category: "Utilities",
-            endpoint: "", description: "Preview rows", inputs: ["df"], outputs: [],
-            params: [], params_schema: {
-              properties: { rows: { type: "integer", title: "Rows", default: 10 } },
-            },
-          },
-          params: { rows: 10 },
+          params: { column: "year", operator: ">", value: "2010" },
         },
       },
     ],
     edges: [
-      { id: "e1-2", source: "n1", sourceHandle: "df", target: "n2", targetHandle: "df" },
-      { id: "e2-3", source: "n2", sourceHandle: "df", target: "n3", targetHandle: "df" },
+      { id: "e1-2", source: "n1", sourceHandle: "dataframe", target: "n2", targetHandle: "dataframe" },
     ],
   },
 
@@ -346,24 +333,9 @@ const TEMPLATES: Record<string, { nodes: GraphFlowNode[]; edges: Edge[] }> = {
         },
       },
       {
-        id: "t8",
-        type: "graphNode",
-        position: { x: 1350, y: 50 },
-        data: {
-          nodeInfo: {
-            node_id: "preview", display_name: "Training Data Preview", category: "Utilities",
-            endpoint: "", description: "Inspect data before training", inputs: ["dataframe"], outputs: ["dataframe", "preview"],
-            params: [], params_schema: {
-              properties: { rows: { type: "integer", title: "Rows", default: 20 } },
-            },
-          },
-          params: { rows: 20 },
-        },
-      },
-      {
         id: "t9",
         type: "graphNode",
-        position: { x: 1350, y: 250 },
+        position: { x: 1350, y: 150 },
         data: {
           nodeInfo: {
             node_id: "trainer", display_name: "Train Yield Model", category: "Modeling",
@@ -396,8 +368,7 @@ const TEMPLATES: Record<string, { nodes: GraphFlowNode[]; edges: Edge[] }> = {
       { id: "et3-t5", source: "t3", sourceHandle: "dataframe", target: "t5", targetHandle: "right" },
       { id: "et5-t6", source: "t5", sourceHandle: "dataframe", target: "t6", targetHandle: "dataframe" },
       { id: "et6-t7", source: "t6", sourceHandle: "dataframe", target: "t7", targetHandle: "dataframe" },
-      { id: "et7-t8", source: "t7", sourceHandle: "dataframe", target: "t8", targetHandle: "dataframe" },
-      { id: "et8-t9", source: "t8", sourceHandle: "dataframe", target: "t9", targetHandle: "dataframe" },
+      { id: "et7-t9", source: "t7", sourceHandle: "dataframe", target: "t9", targetHandle: "dataframe" },
     ],
   },
 }
@@ -443,7 +414,7 @@ function GraphNodeComponent({ id, data, selected }: NodeProps<GraphFlowNode>) {
       detail: { nodeId: (e.target as HTMLElement).closest("[data-nodeid]")?.getAttribute("data-nodeid"), label: editVal },
       bubbles: true,
     })
-    ;(e.target as HTMLElement).dispatchEvent(evt)
+      ; (e.target as HTMLElement).dispatchEvent(evt)
     setEditing(false)
   }
 
@@ -538,14 +509,14 @@ function NodePalette({ nodeList }: { nodeList: NodeInfo[] }) {
 
   const filtered = search.trim()
     ? nodeList.filter(
-        (n) =>
-          n.display_name.toLowerCase().includes(search.toLowerCase()) ||
-          n.description.toLowerCase().includes(search.toLowerCase()),
-      )
+      (n) =>
+        n.display_name.toLowerCase().includes(search.toLowerCase()) ||
+        n.description.toLowerCase().includes(search.toLowerCase()),
+    )
     : nodeList
 
   const grouped = filtered.reduce<Record<string, NodeInfo[]>>((acc, n) => {
-    ;(acc[n.category] ??= []).push(n)
+    ; (acc[n.category] ??= []).push(n)
     return acc
   }, {})
 
@@ -718,9 +689,11 @@ function DatasourceKeySelect({
 
 function NodeInspector({
   node,
+  runResult,
   onChange,
 }: {
   node: GraphFlowNode | null
+  runResult?: RunResult | undefined
   onChange: (nodeId: string, params: Record<string, unknown>) => void
 }) {
   if (!node) {
@@ -863,6 +836,13 @@ function NodeInspector({
         <Text fontSize="xs" color="gray.500" fontWeight="semibold" mt={2} mb={1}>Outputs</Text>
         {nodeInfo.outputs.map((s) => <Badge key={s} mr={1} mb={1} colorScheme="green" fontSize="xs">{s}</Badge>)}
         {nodeInfo.outputs.length === 0 && <Text fontSize="xs" color="gray.400">none</Text>}
+
+        {runResult?.result?.[node.id] && (
+          <Box mt={3} pt={3} borderTop="1px dashed" borderColor="gray.200">
+            <Text fontSize="xs" color="gray.500" fontWeight="semibold" mb={2}>Last Run Output</Text>
+            <RunResultView result={{ [node.id]: runResult.result[node.id] }} hideNodeId />
+          </Box>
+        )}
       </Box>
     </Box>
   )
@@ -882,11 +862,11 @@ function ResultsPane({
   if (!runId) return null
 
   const statusColor: Record<string, string> = {
-    pending: "yellow", running: "blue", done: "green", error: "red",
+    pending: "yellow", running: "blue", success: "green", done: "green", error: "red",
   }
 
   return (
-    <Box bg="white" borderTop="1px solid" borderColor="gray.200" p={3} maxH="220px" overflowY="auto">
+    <Box bg="white" borderTop="1px solid" borderColor="gray.200" p={3} maxH="350px" overflowY="auto">
       <Flex align="center" gap={3} mb={2}>
         <Text fontWeight="bold" fontSize="sm">Run Results</Text>
         {status && (
@@ -952,23 +932,50 @@ function PreviewTable({ rows }: { rows: Record<string, unknown>[] }) {
   )
 }
 
-function RunResultView({ result }: { result: Record<string, unknown> }) {
+function RunResultView({ result, hideNodeId = false }: { result: Record<string, unknown>, hideNodeId?: boolean }) {
+  // Track which (nodeId, slot) pairs have their preview expanded
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const toggle = (key: string) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }))
+
   return (
     <Box>
       {Object.entries(result).map(([nodeId, outputs]) => {
         const outs = outputs as Record<string, unknown>
         return (
           <Box key={nodeId} mb={3}>
-            <Text fontWeight="semibold" fontSize="xs" color="gray.600" mb={1}>{nodeId}</Text>
+            {!hideNodeId && <Text fontWeight="semibold" fontSize="xs" color="gray.600" mb={1}>{nodeId}</Text>}
             {Object.entries(outs).map(([slot, val]) => {
               const v = val as Record<string, unknown> | unknown
               if (v && typeof v === "object" && (v as Record<string, unknown>).__type__ === "dataframe") {
-                const df = v as { shape: number[]; path: string }
+                const df = v as { shape: number[]; path: string; preview_rows?: Record<string, unknown>[]; columns?: string[] }
+                const expandKey = `${nodeId}:${slot}`
+                const isExpanded = !!expanded[expandKey]
+                const hasPreview = Array.isArray(df.preview_rows) && df.preview_rows.length > 0
                 return (
-                  <Text key={slot} fontSize="xs" color="gray.700">
-                    📊 <b>{slot}</b>: DataFrame {df.shape?.[0]} rows × {df.shape?.[1]} cols
-                    <Text as="span" fontSize="xs" color="gray.400" ml={2}>(add a Preview node to inspect rows)</Text>
-                  </Text>
+                  <Box key={slot} mb={1}>
+                    <Flex align="center" gap={2} flexWrap="wrap">
+                      <Text fontSize="xs" color="gray.700">
+                        📊 <b>{slot}</b>: {df.shape?.[0]} rows × {df.shape?.[1]} cols
+                      </Text>
+                      {df.path && (
+                        <a href={`/api/v1/graphs/artifacts/${df.path}`} download style={{ fontSize: '11px', color: '#3182ce', textDecoration: 'underline' }}>
+                          Download
+                        </a>
+                      )}
+                      {hasPreview && (
+                        <Button size="xs" variant="ghost" colorScheme="blue" onClick={() => toggle(expandKey)}>
+                          {isExpanded ? "▾ Hide preview" : `▸ Show preview (${df.preview_rows!.length} rows)`}
+                        </Button>
+                      )}
+                    </Flex>
+                    {hasPreview && (
+                      <Collapse in={isExpanded} animateOpacity>
+                        <Box mt={1}>
+                          <PreviewTable rows={df.preview_rows!} />
+                        </Box>
+                      </Collapse>
+                    )}
+                  </Box>
                 )
               }
               if (v && typeof v === "object" && (v as Record<string, unknown>).__type__ === "model") {
@@ -980,15 +987,6 @@ function RunResultView({ result }: { result: Record<string, unknown> }) {
                       {m.path}
                     </a>
                   </Text>
-                )
-              }
-              if (v && typeof v === "object" && (v as Record<string, unknown>).rows) {
-                const preview = v as { rows: Record<string, unknown>[] }
-                return (
-                  <Box key={slot} mb={1}>
-                    <Text fontSize="xs" fontWeight="semibold" mb={1}>{slot} preview ({preview.rows.length} rows):</Text>
-                    <PreviewTable rows={preview.rows} />
-                  </Box>
                 )
               }
               return (
@@ -1190,7 +1188,7 @@ function computeAutoLayout(nodes: GraphFlowNode[], edges: Edge[]): GraphFlowNode
   // Group by depth
   const byDepth: Record<number, string[]> = {}
   for (const [id, d] of Object.entries(depth)) {
-    ;(byDepth[d] ??= []).push(id)
+    ; (byDepth[d] ??= []).push(id)
   }
   // Assign positions
   const posMap: Record<string, { x: number; y: number }> = {}
@@ -1287,7 +1285,8 @@ function GraphPage() {
   const { data: runResult } = useQuery<RunResult>({
     queryKey: ["graph-result", runId],
     queryFn: () => axios.get(`/api/v1/graphs/${runId}/result`).then((r) => r.data),
-    enabled: runStatus?.status === "done",
+    // Backend uses status="success"; keep "done" as alias for legacy cache entries.
+    enabled: runStatus?.status === "success" || runStatus?.status === ("done" as string),
   })
 
   // Sync per-node status dots onto canvas nodes
@@ -1300,6 +1299,45 @@ function GraphPage() {
       })),
     )
   }, [runStatus?.node_statuses, setNodes])
+
+  // ── SSE live progress ──
+  // Opens an EventSource against /stream when a run starts.  Events feed
+  // directly into the TanStack Query cache so all consumers of runStatus get
+  // sub-second node-level updates without touching any other code paths.
+  // Polling on runStatus stays as a fallback if the SSE connection drops.
+  useEffect(() => {
+    if (!runId) return
+    const es = new EventSource(`/api/v1/graphs/${runId}/stream`)
+
+    es.onmessage = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data as string) as {
+          type: string
+          status?: string
+          node_statuses?: Record<string, string>
+          error?: string | null
+        }
+        if (data.type === "status" && data.status) {
+          queryClient.setQueryData<RunStatus>(["graph-status", runId], (old) => ({
+            // Preserve everything from the last HTTP poll (timestamps, etc.)
+            ...(old ?? { run_id: runId }),
+            status: data.status as RunStatus["status"],
+            node_statuses: data.node_statuses,
+            error: data.error ?? undefined,
+          }))
+          if (data.status === "success") {
+            // Trigger the result query (enabled guard checks status === "done";
+            // manually invalidate so it fires immediately on SSE completion).
+            queryClient.invalidateQueries({ queryKey: ["graph-result", runId] })
+          }
+        }
+        if (data.type === "done") es.close()
+      } catch { /* skip malformed events */ }
+    }
+
+    es.onerror = () => es.close()
+    return () => es.close()
+  }, [runId, queryClient])
 
   // ── Keyboard copy-paste ──
 
@@ -1730,7 +1768,7 @@ function GraphPage() {
               />
             </ReactFlowProvider>
 
-            <NodeInspector node={selectedNode} onChange={handleParamChange} />
+            <NodeInspector node={selectedNode} runResult={runResult} onChange={handleParamChange} />
           </>
         )}
       </Flex>

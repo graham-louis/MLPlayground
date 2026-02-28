@@ -19,6 +19,7 @@ GET  /api/v1/graphs/artifacts/{path}      Download an artifact file.
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
@@ -29,10 +30,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from app.core.config import settings
 from app.core.db import engine, get_session
 from app.db_models import GraphRun, SavedWorkflow
 from app.nodes.executor import GraphBuilder, GraphSpec, _EXECUTOR, serialize_outputs
@@ -40,7 +42,7 @@ from app.nodes.registry import NODE_REGISTRY
 
 logger = logging.getLogger(__name__)
 
-ARTIFACTS_ROOT = Path(os.environ.get("ARTIFACTS_BASE", "/app/artifacts")).resolve()
+ARTIFACTS_ROOT = Path(settings.ARTIFACTS_BASE).resolve()
 UPLOADS_DIR = ARTIFACTS_ROOT / "uploads"
 
 router = APIRouter(prefix="/graphs", tags=["graphs"])
@@ -403,6 +405,98 @@ def get_run_result(
         status=run.status,
         result=result,
         node_statuses=node_statuses,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /graphs/runs  — run history
+# ---------------------------------------------------------------------------
+
+class RunSummary(BaseModel):
+    run_id: str
+    status: str
+    created_at: str
+    updated_at: str
+    error: Optional[str] = None
+
+
+@router.get("/runs", response_model=list[RunSummary])
+def list_runs(
+    limit: int = 50,
+    session: Session = Depends(get_session),
+) -> list[RunSummary]:
+    """Return the most recent graph runs (newest first). Capped at *limit* rows."""
+    rows = session.exec(
+        select(GraphRun).order_by(GraphRun.created_at.desc()).limit(limit)  # type: ignore[arg-type]
+    ).all()
+    return [
+        RunSummary(
+            run_id=r.run_id,
+            status=r.status,
+            created_at=r.created_at,
+            updated_at=r.updated_at,
+            error=r.error,
+        )
+        for r in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# GET /graphs/{run_id}/stream  — SSE live progress
+# ---------------------------------------------------------------------------
+
+@router.get("/{run_id}/stream")
+def stream_run_status(run_id: str) -> StreamingResponse:
+    """Server-Sent Events stream for a graph run.
+
+    Emits a JSON ``data:`` line every 400 ms while the run is pending or
+    running, then one final event and closes.
+
+    Event payload::
+
+        {"type": "status", "run_id": "...", "status": "...",
+         "node_statuses": {...}, "error": null}
+
+    The frontend can subscribe via ``new EventSource(url)`` and update node
+    colours without polling the ``/status`` endpoint.
+    """
+
+    async def _generate():
+        while True:
+            with Session(engine) as session:
+                run = session.exec(
+                    select(GraphRun).where(GraphRun.run_id == run_id)
+                ).first()
+
+            if run is None:
+                payload = json.dumps({"type": "error", "message": f"Run '{run_id}' not found."})
+                yield f"data: {payload}\n\n"
+                return
+
+            node_statuses = json.loads(run.node_statuses) if run.node_statuses else {}
+            payload = json.dumps({
+                "type": "status",
+                "run_id": run_id,
+                "status": run.status,
+                "node_statuses": node_statuses,
+                "error": run.error,
+            })
+            yield f"data: {payload}\n\n"
+
+            if run.status in ("success", "error"):
+                yield f"data: {json.dumps({'type': 'done', 'run_id': run_id})}\n\n"
+                return
+
+            await asyncio.sleep(0.4)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 

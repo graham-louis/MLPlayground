@@ -20,7 +20,6 @@ def build_yield_prediction_spec():
     import app.nodes.node_sources   # noqa: F401 — registers csv_source, database_source
     import app.nodes.node_transforms  # noqa: F401 — registers join, select_columns, drop_na
     import app.nodes.node_modeling   # noqa: F401 — registers trainer
-    import app.nodes.node_utils      # noqa: F401 — registers preview
     from app.nodes.executor import GraphSpec, NodeInstance, Edge
 
     nodes = [
@@ -39,7 +38,6 @@ def build_yield_prediction_spec():
                                          "avg_temp", "precipitation", "gdd",
                                          "ph", "organic_matter", "sand_pct", "clay_pct"]}),
         NodeInstance(instance_id="t7", node_type="drop_na", params={"columns": []}),
-        NodeInstance(instance_id="t8", node_type="preview", params={"rows": 20}),
         NodeInstance(instance_id="t9", node_type="trainer",
                      params={
                          "model_type": "random_forest",
@@ -64,8 +62,6 @@ def build_yield_prediction_spec():
         Edge(source_instance_id="t6", source_slot="dataframe",
              target_instance_id="t7", target_slot="dataframe"),
         Edge(source_instance_id="t7", source_slot="dataframe",
-             target_instance_id="t8", target_slot="dataframe"),
-        Edge(source_instance_id="t8", source_slot="dataframe",
              target_instance_id="t9", target_slot="dataframe"),
     ]
     return GraphSpec(nodes=nodes, edges=edges)
@@ -84,11 +80,11 @@ class TestYieldPredictionTopology:
         plan = GraphBuilder().build(spec)
         assert plan is not None
 
-    def test_all_nine_nodes_included(self):
+    def test_all_eight_nodes_included(self):
         from app.nodes.executor import GraphBuilder
         spec = build_yield_prediction_spec()
         plan = GraphBuilder().build(spec)
-        assert len(plan.ordered_ids) == 9
+        assert len(plan.ordered_ids) == 8
 
     def test_sources_come_before_joins(self):
         from app.nodes.executor import GraphBuilder
@@ -105,8 +101,8 @@ class TestYieldPredictionTopology:
         spec = build_yield_prediction_spec()
         plan = GraphBuilder().build(spec)
         order = plan.ordered_ids
-        # The linear portion: t5 → t6 → t7 → t8 → t9
-        for pred, succ in [("t5", "t6"), ("t6", "t7"), ("t7", "t8"), ("t8", "t9")]:
+        # The linear portion: t5 → t6 → t7 → t9
+        for pred, succ in [("t5", "t6"), ("t6", "t7"), ("t7", "t9")]:
             assert order.index(pred) < order.index(succ), f"{pred} must precede {succ}"
 
     def test_trainer_is_last(self):

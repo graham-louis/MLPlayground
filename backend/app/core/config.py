@@ -55,5 +55,9 @@ class Settings(BaseSettings):
 
     NASS_API_KEY: str = ""
 
+    ARTIFACTS_BASE: str = "/app/artifacts"
+    """Root directory for all artifact storage (models, cache, exports, etc.).
+    Override with the ARTIFACTS_BASE environment variable."""
+
 
 settings = Settings()  # type: ignore
