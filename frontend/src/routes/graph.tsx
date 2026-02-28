@@ -23,7 +23,12 @@ import {
   Spinner,
   Stack,
   Switch,
+  Tab,
   Table,
+  TabList,
+  TabPanel,
+  TabPanels,
+  Tabs,
   Tbody,
   Td,
   Text,
@@ -31,28 +36,36 @@ import {
   Thead,
   Tooltip,
   Tr,
+  Wrap,
+  WrapItem,
   useToast,
 } from "@chakra-ui/react"
 import { createFileRoute } from "@tanstack/react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   Background,
+  BaseEdge,
   Controls,
+  EdgeLabelRenderer,
   Handle,
   MiniMap,
+  NodeResizer,
   Position,
   ReactFlow,
   ReactFlowProvider,
   addEdge,
+  getBezierPath,
   useEdgesState,
   useNodesState,
   useReactFlow,
   type Connection,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeProps,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
+import dagre from "@dagrejs/dagre"
 import axios from "axios"
 import { useCallback, useEffect, useRef, useState } from "react"
 
@@ -96,6 +109,7 @@ interface GraphNodeData {
   params: Record<string, unknown>
   runStatus?: string
   label?: string        // user-provided custom name
+  bypassed?: boolean
   [key: string]: unknown
 }
 
@@ -371,6 +385,127 @@ const TEMPLATES: Record<string, { nodes: GraphFlowNode[]; edges: Edge[] }> = {
       { id: "et7-t9", source: "t7", sourceHandle: "dataframe", target: "t9", targetHandle: "dataframe" },
     ],
   },
+
+  "NOAA Weather → Plot": {
+    nodes: [
+      {
+        id: "r1",
+        type: "graphNode",
+        position: { x: 60, y: 160 },
+        data: {
+          nodeInfo: {
+            node_id: "remote_fetch",
+            display_name: "NOAA Annual Weather",
+            category: "Sources",
+            endpoint: "",
+            description: "Fetch NOAA GSOY data for a US state",
+            inputs: [],
+            outputs: ["dataframe"],
+            params: ["datasource_key", "scope_params_json"],
+            params_schema: {
+              properties: {
+                datasource_key: {
+                  type: "string",
+                  title: "Datasource Key",
+                  description: "Registered ingest datasource key",
+                  default: "noaa_gsoy",
+                },
+                scope_params_json: {
+                  type: "string",
+                  title: "Scope Params (JSON)",
+                  description: "Keys match the datasource's scope_params",
+                  default: "{}",
+                },
+              },
+              required: ["datasource_key"],
+            },
+          },
+          params: {
+            datasource_key: "noaa_gsoy",
+            scope_params_json: JSON.stringify({
+              state: "NC",
+              start_year: 2015,
+              end_year: 2022,
+              variables: ["TAVG", "PRCP"],
+            }),
+          },
+          label: "NOAA Weather (NC)",
+        },
+      },
+      {
+        id: "r2",
+        type: "graphNode",
+        position: { x: 340, y: 80 },
+        data: {
+          nodeInfo: {
+            node_id: "plot",
+            display_name: "Avg Temperature over Time",
+            category: "Visualization",
+            endpoint: "",
+            description: "Line chart of TAVG by year",
+            inputs: ["dataframe"],
+            outputs: ["figure"],
+            params: ["plot_type", "x_column", "y_column", "color_column", "title"],
+            params_schema: {
+              properties: {
+                plot_type: { type: "string", title: "Plot Type", enum: ["scatter", "line", "histogram", "bar", "box"], default: "line" },
+                x_column:  { type: "string", title: "X Column",  default: "" },
+                y_column:  { type: "string", title: "Y Column",  default: "" },
+                color_column: { type: "string", title: "Colour Column", default: "" },
+                title: { type: "string", title: "Title", default: "" },
+              },
+            },
+          },
+          params: {
+            plot_type: "line",
+            x_column: "year",
+            y_column: "tavg",
+            color_column: "station",
+            title: "Average Annual Temperature — NC",
+          },
+          label: "Temp over Time",
+        },
+      },
+      {
+        id: "r3",
+        type: "graphNode",
+        position: { x: 340, y: 280 },
+        data: {
+          nodeInfo: {
+            node_id: "plot",
+            display_name: "Precipitation over Time",
+            category: "Visualization",
+            endpoint: "",
+            description: "Bar chart of PRCP by year",
+            inputs: ["dataframe"],
+            outputs: ["figure"],
+            params: ["plot_type", "x_column", "y_column", "color_column", "title"],
+            params_schema: {
+              properties: {
+                plot_type: { type: "string", title: "Plot Type", enum: ["scatter", "line", "histogram", "bar", "box"], default: "bar" },
+                x_column:  { type: "string", title: "X Column",  default: "" },
+                y_column:  { type: "string", title: "Y Column",  default: "" },
+                color_column: { type: "string", title: "Colour Column", default: "" },
+                title: { type: "string", title: "Title", default: "" },
+              },
+            },
+          },
+          params: {
+            plot_type: "bar",
+            x_column: "year",
+            y_column: "prcp",
+            color_column: "",
+            title: "Annual Precipitation — NC",
+          },
+          label: "Precip over Time",
+        },
+      },
+    ],
+    edges: [
+      { id: "er1-r2", source: "r1", sourceHandle: "dataframe", target: "r2", targetHandle: "dataframe" },
+      { id: "er1-r3", source: "r1", sourceHandle: "dataframe", target: "r3", targetHandle: "dataframe" },
+    ],
+  },
 }
 
 // ── Custom ReactFlow node component ───────────────────────────────────────
@@ -384,20 +519,71 @@ const CATEGORY_COLORS: Record<string, string> = {
   Unknown: "#718096",
 }
 
+// ── Run status badge ───────────────────────────────────────────────────────
+
+function RunStatusBadge({ status }: { status?: string }) {
+  if (!status) return null
+  if (status === "running") {
+    return (
+      <Box position="absolute" top="4px" right="4px" zIndex={1}>
+        <Spinner size="xs" color="yellow.400" speed="0.7s" />
+      </Box>
+    )
+  }
+  const cfg: Record<string, { icon: string; color: string }> = {
+    done:     { icon: "✓", color: "green.500" },
+    success:  { icon: "✓", color: "green.500" },
+    cached:   { icon: "◷", color: "purple.400" },
+    error:    { icon: "✕", color: "red.500" },
+    pending:  { icon: "·", color: "gray.400" },
+    bypassed: { icon: "⊘", color: "gray.400" },
+  }
+  const c = cfg[status] ?? { icon: "·", color: "gray.400" }
+  return (
+    <Tooltip label={status} placement="top" hasArrow>
+      <Box
+        position="absolute"
+        top="4px"
+        right="4px"
+        w="16px"
+        h="16px"
+        borderRadius="full"
+        display="flex"
+        alignItems="center"
+        justifyContent="center"
+        zIndex={1}
+        cursor="default"
+      >
+        <Text fontSize="10px" fontWeight="bold" color={c.color} lineHeight={1}>
+          {c.icon}
+        </Text>
+      </Box>
+    </Tooltip>
+  )
+}
+
+// ── Param label with optional description tooltip (6.4) ────────────────────
+
+function ParamLabel({ label, description }: { label: string; description?: string }) {
+  if (!description) {
+    return <FormLabel fontSize="xs" mb={1}>{label}</FormLabel>
+  }
+  return (
+    <FormLabel fontSize="xs" mb={1}>
+      <Tooltip label={description} placement="top" hasArrow>
+        <Text as="span" cursor="help" borderBottom="1px dashed" borderColor="gray.400">
+          {label}
+        </Text>
+      </Tooltip>
+    </FormLabel>
+  )
+}
+
 function GraphNodeComponent({ id, data, selected }: NodeProps<GraphFlowNode>) {
-  const { nodeInfo, runStatus, label } = data
+  const { nodeInfo, runStatus, label, bypassed } = data
   const headerColor = CATEGORY_COLORS[nodeInfo.category] ?? CATEGORY_COLORS.Unknown
   const [editing, setEditing] = useState(false)
   const [editVal, setEditVal] = useState("")
-
-  const statusDotColor: Record<string, string> = {
-    done: "#48bb78",
-    cached: "#9f7aea",
-    error: "#f56565",
-    running: "#ecc94b",
-    pending: "#a0aec0",
-  }
-  const dotColor = runStatus ? (statusDotColor[runStatus] ?? "#a0aec0") : null
 
   function startEdit() {
     setEditVal(String(label ?? nodeInfo.display_name))
@@ -419,30 +605,30 @@ function GraphNodeComponent({ id, data, selected }: NodeProps<GraphFlowNode>) {
   }
 
   return (
-    <Box
-      bg="white"
-      border={selected ? "2px solid #63b3ed" : "1px solid #cbd5e0"}
-      borderRadius="md"
-      boxShadow={selected ? "0 0 0 3px rgba(99,179,237,0.4)" : "sm"}
-      minW="160px"
-      overflow="hidden"
-      fontSize="sm"
-      position="relative"
-      data-nodeid={id}
-    >
-      {dotColor && (
-        <Box
-          position="absolute"
-          top="6px"
-          right="6px"
-          w="8px"
-          h="8px"
-          borderRadius="full"
-          bg={dotColor}
-          zIndex={1}
-          title={runStatus}
-        />
-      )}
+    <>
+      <NodeResizer
+        minWidth={160}
+        minHeight={70}
+        isVisible={!!selected}
+        lineStyle={{ borderColor: "#63b3ed", borderWidth: 1 }}
+        handleStyle={{ width: 8, height: 8, borderRadius: "50%", background: "#63b3ed" }}
+      />
+      <Box
+        bg="white"
+        border={selected ? "2px solid #63b3ed" : bypassed ? "2px dashed #a0aec0" : "1px solid #cbd5e0"}
+        borderRadius="md"
+        boxShadow={selected ? "0 0 0 3px rgba(99,179,237,0.4)" : "sm"}
+        w="100%"
+        h="100%"
+        minW="160px"
+        overflow="hidden"
+        fontSize="sm"
+        position="relative"
+        data-nodeid={id}
+        opacity={bypassed ? 0.45 : 1}
+        transition="opacity 0.15s"
+      >
+        <RunStatusBadge status={runStatus} />
       {/* Renders an input handle for each slot on the left edge */}
       {nodeInfo.inputs.map((slot, i) => (
         <Handle
@@ -450,7 +636,7 @@ function GraphNodeComponent({ id, data, selected }: NodeProps<GraphFlowNode>) {
           type="target"
           position={Position.Left}
           id={slot}
-          style={{ top: 36 + i * 18, background: headerColor }}
+          style={{ top: 40 + i * 22, background: headerColor, width: 14, height: 14, border: "2px solid white" }}
           title={slot}
         />
       ))}
@@ -479,9 +665,11 @@ function GraphNodeComponent({ id, data, selected }: NodeProps<GraphFlowNode>) {
       <Box px={3} py={2}>
         <Text fontSize="xs" color="gray.500">{nodeInfo.category}</Text>
         {Object.entries(data.params as Record<string, unknown>).slice(0, 3).map(([k, v]) => (
-          <Text key={k} fontSize="xs" noOfLines={1} color="gray.700">
-            <b>{k}:</b> {String(v)}
-          </Text>
+          <Tooltip key={k} label={`${k}: ${String(v)}`} placement="right" hasArrow openDelay={400}>
+            <Text fontSize="xs" noOfLines={1} color="gray.700">
+              <b>{k}:</b> {String(v)}
+            </Text>
+          </Tooltip>
         ))}
       </Box>
 
@@ -492,15 +680,79 @@ function GraphNodeComponent({ id, data, selected }: NodeProps<GraphFlowNode>) {
           type="source"
           position={Position.Right}
           id={slot}
-          style={{ top: 36 + i * 18, background: headerColor }}
+          style={{ top: 40 + i * 22, background: headerColor, width: 14, height: 14, border: "2px solid white" }}
           title={slot}
         />
       ))}
     </Box>
+    </>
   )
 }
 
 const nodeTypes = { graphNode: GraphNodeComponent }
+
+// ── Custom deletable edge ─────────────────────────────────────────────────
+
+function DeletableEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  selected,
+  markerEnd,
+  style,
+}: EdgeProps) {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  })
+  const { setEdges } = useReactFlow()
+
+  return (
+    <>
+      <BaseEdge
+        path={edgePath}
+        markerEnd={markerEnd}
+        style={{
+          ...style,
+          stroke: selected ? "#63b3ed" : "#b0bec5",
+          strokeWidth: selected ? 2.5 : 1.5,
+        }}
+      />
+      <EdgeLabelRenderer>
+        <Box
+          position="absolute"
+          transform={`translate(-50%, -50%) translate(${labelX}px,${labelY}px)`}
+          pointerEvents="all"
+          opacity={selected ? 1 : 0}
+          transition="opacity 0.15s"
+          className="nodrag nopan"
+        >
+          <IconButton
+            aria-label="Delete edge"
+            icon={<Text fontSize="sm" lineHeight={1}>×</Text>}
+            size="xs"
+            colorScheme="red"
+            borderRadius="full"
+            w="18px"
+            h="18px"
+            minW="18px"
+            onClick={() => setEdges((eds) => eds.filter((e) => e.id !== id))}
+          />
+        </Box>
+      </EdgeLabelRenderer>
+    </>
+  )
+}
+
+const edgeTypes = { default: DeletableEdge }
 
 // ── Palette ────────────────────────────────────────────────────────────────
 
@@ -526,7 +778,7 @@ function NodePalette({ nodeList }: { nodeList: NodeInfo[] }) {
   }
 
   return (
-    <Box w="200px" flexShrink={0} bg="white" borderRight="1px solid" borderColor="gray.200" overflowY="auto" p={2}>
+    <Box flex={1} bg="white" overflowY="auto" p={2}>
       <Text fontWeight="bold" fontSize="sm" mb={2} color="gray.700">Node Library</Text>
       <Input
         size="xs"
@@ -687,18 +939,165 @@ function DatasourceKeySelect({
   )
 }
 
+// ── Column toggle selector ──────────────────────────────────────────────────
+// Renders upstream dataframe columns as click-to-toggle buttons, with a
+// freeform text input for adding column names not present in the run result.
+
+function ColumnToggleSelect({
+  value,
+  availableColumns,
+  onChange,
+}: {
+  value: string[]
+  availableColumns: string[]
+  onChange: (v: string[]) => void
+}) {
+  const [custom, setCustom] = useState("")
+  const selectedSet = new Set(value)
+
+  function toggle(col: string) {
+    if (selectedSet.has(col)) onChange(value.filter((c) => c !== col))
+    else onChange([...value, col])
+  }
+
+  function addCustom() {
+    const col = custom.trim()
+    if (!col) return
+    if (!selectedSet.has(col)) onChange([...value, col])
+    setCustom("")
+  }
+
+  // Items that are selected but not in the known column list
+  const extras = value.filter((c) => !availableColumns.includes(c))
+
+  return (
+    <Box>
+      {availableColumns.length > 0 ? (
+        <Wrap spacing={1} mb={2}>
+          {availableColumns.map((col) => (
+            <WrapItem key={col}>
+              <Button
+                size="xs"
+                colorScheme={selectedSet.has(col) ? "blue" : "gray"}
+                variant={selectedSet.has(col) ? "solid" : "outline"}
+                onClick={() => toggle(col)}
+                fontWeight={selectedSet.has(col) ? "semibold" : "normal"}
+              >
+                {col}
+              </Button>
+            </WrapItem>
+          ))}
+        </Wrap>
+      ) : (
+        <Text fontSize="2xs" color="gray.400" mb={1}>
+          Run the graph to see available columns
+        </Text>
+      )}
+
+      {/* Selected columns not present in the available list */}
+      {extras.length > 0 && (
+        <Wrap spacing={1} mb={2}>
+          {extras.map((col) => (
+            <WrapItem key={col}>
+              <Badge
+                colorScheme="blue"
+                cursor="pointer"
+                title="Click to remove"
+                onClick={() => toggle(col)}
+                fontSize="xs"
+                px={2}
+                py={0.5}
+                borderRadius="md"
+              >
+                {col} ×
+              </Badge>
+            </WrapItem>
+          ))}
+        </Wrap>
+      )}
+
+      {/* Freeform entry */}
+      <Flex gap={1} mt={1}>
+        <Input
+          size="xs"
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === ",") {
+              e.preventDefault()
+              addCustom()
+            }
+          }}
+          placeholder="add column…"
+          flex={1}
+        />
+        <IconButton
+          aria-label="Add column"
+          icon={<Text fontSize="xs" lineHeight={1}>+</Text>}
+          size="xs"
+          onClick={addCustom}
+        />
+      </Flex>
+    </Box>
+  )
+}
+
+// ── Single-column selector ───────────────────────────────────────────────────
+// Dropdown populated from upstream columns; falls back to free text when no
+// upstream run result is available yet.
+
+function ColumnSingleSelect({
+  value,
+  availableColumns,
+  onChange,
+  placeholder,
+}: {
+  value: string
+  availableColumns: string[]
+  onChange: (v: string) => void
+  placeholder?: string
+}) {
+  if (availableColumns.length === 0) {
+    return (
+      <Input
+        size="sm"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder ?? "column name"}
+      />
+    )
+  }
+  return (
+    <Select
+      size="sm"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      {value && !availableColumns.includes(value) && (
+        <option value={value}>{value}</option>
+      )}
+      <option value="">— select column —</option>
+      {availableColumns.map((col) => (
+        <option key={col} value={col}>{col}</option>
+      ))}
+    </Select>
+  )
+}
+
 function NodeInspector({
   node,
   runResult,
   onChange,
+  allEdges,
 }: {
   node: GraphFlowNode | null
   runResult?: RunResult | undefined
   onChange: (nodeId: string, params: Record<string, unknown>) => void
+  allEdges: Edge[]
 }) {
   if (!node) {
     return (
-      <Box w="220px" flexShrink={0} bg="white" borderLeft="1px solid" borderColor="gray.200" p={3}>
+      <Box w="220px" bg="white" borderLeft="1px solid" borderColor="gray.200" p={3}>
         <Text fontSize="sm" color="gray.400">Select a node to edit its parameters.</Text>
       </Box>
     )
@@ -709,12 +1108,32 @@ function NodeInspector({
   const properties = schema?.properties ?? {}
   const currentNode = node
 
+  // Collect columns from all upstream nodes' dataframe outputs in the last run
+  const availableColumns: string[] = []
+  if (runResult?.result) {
+    const upstreamIds = allEdges.filter((e) => e.target === node.id).map((e) => e.source)
+    for (const upId of upstreamIds) {
+      const outputs = runResult.result[upId]
+      if (!outputs || typeof outputs !== "object") continue
+      for (const slot of Object.values(outputs as Record<string, unknown>)) {
+        if (slot && typeof slot === "object" && (slot as Record<string, unknown>).__type__ === "dataframe") {
+          const cols = (slot as Record<string, unknown>).columns
+          if (Array.isArray(cols)) {
+            for (const col of cols) {
+              if (typeof col === "string" && !availableColumns.includes(col)) availableColumns.push(col)
+            }
+          }
+        }
+      }
+    }
+  }
+
   function update(key: string, value: unknown) {
     onChange(currentNode.id, { ...(params as Record<string, unknown>), [key]: value })
   }
 
   return (
-    <Box w="220px" flexShrink={0} bg="white" borderLeft="1px solid" borderColor="gray.200" p={3} overflowY="auto">
+    <Box w="220px" bg="white" borderLeft="1px solid" borderColor="gray.200" p={3} overflowY="auto">
       <Text fontWeight="bold" fontSize="sm" mb={1}>{nodeInfo.display_name}</Text>
       <Text fontSize="xs" color="gray.500" mb={3}>{nodeInfo.description}</Text>
 
@@ -727,7 +1146,7 @@ function NodeInspector({
           if (key === "file_path") {
             return (
               <FormControl key={key} size="sm">
-                <FormLabel fontSize="xs">{label}</FormLabel>
+                <ParamLabel label={label} description={prop.description} />
                 <FilePathUpload
                   value={String(value ?? prop.default ?? "")}
                   onChange={(v) => update(key, v)}
@@ -750,11 +1169,27 @@ function NodeInspector({
             )
           }
 
+          // Single-column string fields → column selector
+          const isColumnKey = key === "column" || key.endsWith("_column")
+          if (prop.type === "string" && isColumnKey) {
+            return (
+              <FormControl key={key} size="sm">
+                <ParamLabel label={label} description={prop.description} />
+                <ColumnSingleSelect
+                  value={String(value ?? prop.default ?? "")}
+                  availableColumns={availableColumns}
+                  onChange={(v) => update(key, v)}
+                  placeholder={prop.description}
+                />
+              </FormControl>
+            )
+          }
+
           // datasource_key → dynamically populated select
           if (key === "datasource_key") {
             return (
               <FormControl key={key} size="sm">
-                <FormLabel fontSize="xs">{label}</FormLabel>
+                <ParamLabel label={label} description={prop.description} />
                 <DatasourceKeySelect
                   value={String(value ?? "")}
                   onChange={(v) => update(key, v)}
@@ -767,7 +1202,7 @@ function NodeInspector({
           if (prop.enum) {
             return (
               <FormControl key={key} size="sm">
-                <FormLabel fontSize="xs">{label}</FormLabel>
+                <ParamLabel label={label} description={prop.description} />
                 <Select
                   size="sm"
                   value={String(value ?? prop.default ?? "")}
@@ -785,7 +1220,13 @@ function NodeInspector({
           if (prop.type === "boolean") {
             return (
               <FormControl key={key} display="flex" alignItems="center" size="sm">
-                <FormLabel fontSize="xs" mb={0} mr={2}>{label}</FormLabel>
+                <FormLabel fontSize="xs" mb={0} mr={2}>
+                  {prop.description ? (
+                    <Tooltip label={prop.description} placement="top" hasArrow>
+                      <Text as="span" cursor="help" borderBottom="1px dashed" borderColor="gray.400">{label}</Text>
+                    </Tooltip>
+                  ) : label}
+                </FormLabel>
                 <Switch
                   size="sm"
                   isChecked={Boolean(value ?? prop.default)}
@@ -799,7 +1240,7 @@ function NodeInspector({
           if (prop.type === "integer" || prop.type === "number") {
             return (
               <FormControl key={key} size="sm">
-                <FormLabel fontSize="xs">{label}</FormLabel>
+                <ParamLabel label={label} description={prop.description} />
                 <Input
                   size="sm"
                   type="number"
@@ -810,10 +1251,57 @@ function NodeInspector({
             )
           }
 
+          // Array of strings → column toggle selector
+          if (prop.type === "array" && (prop.items?.type === "string" || !prop.items?.type)) {
+            const arrVal: string[] = Array.isArray(value)
+              ? (value as unknown[]).map(String)
+              : Array.isArray(prop.default)
+                ? (prop.default as unknown[]).map(String)
+                : []
+            return (
+              <FormControl key={key} size="sm">
+                <ParamLabel label={label} description={prop.description} />
+                <ColumnToggleSelect
+                  value={arrVal}
+                  availableColumns={availableColumns}
+                  onChange={(v) => update(key, v)}
+                />
+              </FormControl>
+            )
+          }
+
+          // Array of non-strings → comma-separated fallback
+          if (prop.type === "array") {
+            const arrVal = Array.isArray(value)
+              ? (value as unknown[]).join(", ")
+              : Array.isArray(prop.default)
+                ? (prop.default as unknown[]).join(", ")
+                : String(value ?? "")
+            return (
+              <FormControl key={key} size="sm">
+                <ParamLabel label={label} description={prop.description} />
+                <Input
+                  size="sm"
+                  value={arrVal}
+                  onChange={(e) =>
+                    update(
+                      key,
+                      e.target.value
+                        .split(",")
+                        .map((s) => s.trim())
+                        .filter((s) => s.length > 0),
+                    )
+                  }
+                  placeholder="comma-separated values"
+                />
+              </FormControl>
+            )
+          }
+
           // String or unknown → text input
           return (
             <FormControl key={key} size="sm">
-              <FormLabel fontSize="xs">{label}</FormLabel>
+              <ParamLabel label={label} description={prop.description} />
               <Input
                 size="sm"
                 value={String(value ?? prop.default ?? "")}
@@ -837,7 +1325,7 @@ function NodeInspector({
         {nodeInfo.outputs.map((s) => <Badge key={s} mr={1} mb={1} colorScheme="green" fontSize="xs">{s}</Badge>)}
         {nodeInfo.outputs.length === 0 && <Text fontSize="xs" color="gray.400">none</Text>}
 
-        {runResult?.result?.[node.id] && (
+        {!!(runResult?.result?.[node.id]) && (
           <Box mt={3} pt={3} borderTop="1px dashed" borderColor="gray.200">
             <Text fontSize="xs" color="gray.500" fontWeight="semibold" mb={2}>Last Run Output</Text>
             <RunResultView result={{ [node.id]: runResult.result[node.id] }} hideNodeId />
@@ -848,16 +1336,122 @@ function NodeInspector({
   )
 }
 
+// ── Execution Log pane ─────────────────────────────────────────────────────
+
+function ExecutionLogPane({
+  result,
+  nodeStatuses,
+  nodes,
+}: {
+  result: Record<string, unknown> | undefined
+  nodeStatuses: Record<string, string> | undefined
+  nodes: GraphFlowNode[]
+}) {
+  const timings = (result?.["_timings_"] ?? {}) as Record<string, number>
+  const nodeById = Object.fromEntries(nodes.map((n) => [n.id, n]))
+
+  // Show all nodes that have a status, preserving the graph order where possible
+  const rows = nodes
+    .filter((n) => nodeStatuses?.[n.id] !== undefined)
+    .concat(
+      // include any extra ids present in statuses that aren't in `nodes` (edge case)
+      Object.keys(nodeStatuses ?? {})
+        .filter((id) => !nodes.some((n) => n.id === id))
+        .map((id) => ({ id, data: { nodeInfo: { display_name: id }, params: {}, runStatus: undefined } } as unknown as GraphFlowNode))
+    )
+
+  if (rows.length === 0) {
+    return <Text fontSize="xs" color="gray.400" p={2}>No execution data yet.</Text>
+  }
+
+  return (
+    <Box overflowX="auto">
+      <Table size="xs" variant="simple">
+        <Thead>
+          <Tr>
+            <Th fontSize="xs" p={2}>Node</Th>
+            <Th fontSize="xs" p={2}>Status</Th>
+            <Th fontSize="xs" p={2} isNumeric>Duration (s)</Th>
+            <Th fontSize="xs" p={2}>Output</Th>
+          </Tr>
+        </Thead>
+        <Tbody>
+          {rows.map((node) => {
+            const status = nodeStatuses?.[node.id]
+            const duration = timings[node.id]
+            const displayName =
+              (nodeById[node.id]?.data as GraphNodeData | undefined)?.nodeInfo?.display_name ??
+              node.id
+            const label = (nodeById[node.id]?.data as GraphNodeData | undefined)?.label
+            const nodeOutputs = result?.[node.id] as Record<string, unknown> | undefined
+
+            // Build a short output summary
+            let outputSummary = ""
+            if (nodeOutputs && typeof nodeOutputs === "object") {
+              outputSummary = Object.entries(nodeOutputs)
+                .map(([slot, val]) => {
+                  if (val && typeof val === "object") {
+                    const t = (val as Record<string, unknown>).__type__
+                    if (t === "dataframe") {
+                      const df = val as { shape: number[] }
+                      return `${slot}: ${df.shape?.[0]}×${df.shape?.[1]}`
+                    }
+                    if (t === "model") return `${slot}: model`
+                    if (t === "figure") return `${slot}: chart`
+                  }
+                  return `${slot}: ${String(val).slice(0, 30)}`
+                })
+                .join(", ")
+            }
+
+            const isError = status?.startsWith("error:")
+            const errorMsg = isError ? status?.replace(/^error:\s*/, "") : undefined
+
+            return (
+              <Tr key={node.id}>
+                <Td fontSize="xs" p={2} maxW="160px">
+                  <Text fontWeight="semibold" noOfLines={1} title={displayName}>
+                    {label ? `${label}` : displayName}
+                  </Text>
+                  <Text fontSize="2xs" color="gray.400" noOfLines={1}>{node.id}</Text>
+                </Td>
+                <Td fontSize="xs" p={2}>
+                  <RunStatusBadge status={status} />
+                  {isError && errorMsg && (
+                    <Tooltip label={errorMsg} fontSize="xs">
+                      <Text fontSize="2xs" color="red.400" noOfLines={1} maxW="120px" cursor="help">
+                        {errorMsg}
+                      </Text>
+                    </Tooltip>
+                  )}
+                </Td>
+                <Td fontSize="xs" p={2} isNumeric color="gray.600">
+                  {duration !== undefined ? duration.toFixed(3) : "—"}
+                </Td>
+                <Td fontSize="xs" p={2} color="gray.600" maxW="200px">
+                  <Text noOfLines={1} title={outputSummary}>{outputSummary || "—"}</Text>
+                </Td>
+              </Tr>
+            )
+          })}
+        </Tbody>
+      </Table>
+    </Box>
+  )
+}
+
 // ── Results pane ───────────────────────────────────────────────────────────
 
 function ResultsPane({
   runId,
   status,
   result,
+  nodes,
 }: {
   runId: string | null
   status: RunStatus | undefined
   result: RunResult | undefined
+  nodes: GraphFlowNode[]
 }) {
   if (!runId) return null
 
@@ -881,10 +1475,27 @@ function ResultsPane({
       </Flex>
 
       {status?.error && (
-        <Text color="red.500" fontSize="xs">{status.error}</Text>
+        <Text color="red.500" fontSize="xs" mb={2}>{status.error}</Text>
       )}
 
-      {result?.result && <RunResultView result={result.result} />}
+      <Tabs size="sm" variant="soft-rounded" colorScheme="blue">
+        <TabList mb={2}>
+          <Tab fontSize="xs" py={1} px={3}>Log</Tab>
+          <Tab fontSize="xs" py={1} px={3}>Outputs</Tab>
+        </TabList>
+        <TabPanels>
+          <TabPanel p={0}>
+            <ExecutionLogPane
+              result={result?.result}
+              nodeStatuses={status?.node_statuses}
+              nodes={nodes}
+            />
+          </TabPanel>
+          <TabPanel p={0}>
+            {result?.result && <RunResultView result={result.result} />}
+          </TabPanel>
+        </TabPanels>
+      </Tabs>
     </Box>
   )
 }
@@ -940,6 +1551,8 @@ function RunResultView({ result, hideNodeId = false }: { result: Record<string, 
   return (
     <Box>
       {Object.entries(result).map(([nodeId, outputs]) => {
+        // Skip the internal timings key injected by the backend
+        if (nodeId === "_timings_") return null
         const outs = outputs as Record<string, unknown>
         return (
           <Box key={nodeId} mb={3}>
@@ -989,6 +1602,27 @@ function RunResultView({ result, hideNodeId = false }: { result: Record<string, 
                   </Text>
                 )
               }
+              if (v && typeof v === "object" && (v as Record<string, unknown>).__type__ === "figure") {
+                const fig = v as { data: string; format?: string }
+                const expandKey = `${nodeId}:${slot}`
+                const isExpanded = !!expanded[expandKey]
+                return (
+                  <Box key={slot} mb={1}>
+                    <Button size="xs" variant="ghost" colorScheme="purple" onClick={() => toggle(expandKey)}>
+                      {isExpanded ? "▾ Hide chart" : "▸ Show chart"}
+                    </Button>
+                    <Collapse in={isExpanded} animateOpacity>
+                      <Box mt={1} border="1px solid" borderColor="gray.200" borderRadius="md" overflow="hidden" maxW="100%">
+                        <img
+                          src={`data:image/${fig.format ?? "png"};base64,${fig.data}`}
+                          alt={`${slot} chart`}
+                          style={{ maxWidth: "100%", display: "block" }}
+                        />
+                      </Box>
+                    </Collapse>
+                  </Box>
+                )
+              }
               return (
                 <Text key={slot} fontSize="xs">
                   <b>{slot}:</b> {JSON.stringify(v).slice(0, 120)}
@@ -1018,6 +1652,7 @@ function FlowWithDrop({
   onNodeDrop,
   onNodeDelete,
   onNodeDuplicate,
+  onNodeBypass,
   selectedNodeId,
 }: {
   nodes: GraphFlowNode[]
@@ -1030,6 +1665,7 @@ function FlowWithDrop({
   onNodeDrop: (nodeInfo: NodeInfo, pos: { x: number; y: number }) => void
   onNodeDelete: (id: string) => void
   onNodeDuplicate: (id: string) => void
+  onNodeBypass: (id: string) => void
   selectedNodeId: string | null
 }) {
   const { screenToFlowPosition } = useReactFlow()
@@ -1098,6 +1734,7 @@ function FlowWithDrop({
           setContextMenu({ x: e.clientX, y: e.clientY, nodeId: node.id })
         }}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         fitView
         deleteKeyCode={["Delete", "Backspace"]}
       >
@@ -1136,6 +1773,20 @@ function FlowWithDrop({
           >
             📋 Duplicate
           </Box>
+          <Box
+            px={3}
+            py={1.5}
+            cursor="pointer"
+            borderRadius="sm"
+            fontSize="sm"
+            _hover={{ bg: "yellow.50" }}
+            onClick={() => {
+              onNodeBypass(contextMenu.nodeId)
+              setContextMenu(null)
+            }}
+          >
+            ⊘ {nodes.find((n) => n.id === contextMenu.nodeId)?.data.bypassed ? "Un-bypass" : "Bypass"}
+          </Box>
           <Divider />
           <Box
             px={3}
@@ -1162,43 +1813,42 @@ function FlowWithDrop({
 
 let nodeCounter = 100
 
-/** Topological left-to-right auto-layout: assigns x by depth, y by position within depth. */
-function computeAutoLayout(nodes: GraphFlowNode[], edges: Edge[]): GraphFlowNode[] {
-  // Build adjacency
-  const inDegree: Record<string, number> = {}
-  const adj: Record<string, string[]> = {}
-  for (const n of nodes) { inDegree[n.id] = 0; adj[n.id] = [] }
+/** Dagre-based auto-layout. direction: "LR" = left-to-right, "TB" = top-to-bottom. */
+function layoutNodes(
+  nodes: GraphFlowNode[],
+  edges: Edge[],
+  direction: "LR" | "TB",
+): GraphFlowNode[] {
+  const g = new dagre.graphlib.Graph()
+  g.setDefaultEdgeLabel(() => ({}))
+  const isLR = direction === "LR"
+  g.setGraph({ rankdir: direction, ranksep: isLR ? 80 : 60, nodesep: isLR ? 30 : 20 })
+  for (const n of nodes) {
+    g.setNode(n.id, { width: n.width ?? 200, height: n.height ?? 80 })
+  }
   for (const e of edges) {
-    adj[e.source]?.push(e.target)
-    if (e.target in inDegree) inDegree[e.target]++
+    g.setEdge(e.source, e.target)
   }
-  // Kahn's BFS for depth assignment
-  const depth: Record<string, number> = {}
-  const queue = nodes.filter((n) => inDegree[n.id] === 0).map((n) => n.id)
-  for (const id of queue) depth[id] = 0
-  let qi = 0
-  while (qi < queue.length) {
-    const cur = queue[qi++]
-    for (const next of adj[cur] ?? []) {
-      depth[next] = Math.max(depth[next] ?? 0, (depth[cur] ?? 0) + 1)
-      inDegree[next]--
-      if (inDegree[next] === 0) queue.push(next)
+  dagre.layout(g)
+  return nodes.map((n) => {
+    const pos = g.node(n.id)
+    return {
+      ...n,
+      position: {
+        x: pos.x - (n.width ?? 200) / 2,
+        y: pos.y - (n.height ?? 80) / 2,
+      },
     }
-  }
-  // Group by depth
-  const byDepth: Record<number, string[]> = {}
-  for (const [id, d] of Object.entries(depth)) {
-    ; (byDepth[d] ??= []).push(id)
-  }
-  // Assign positions
-  const posMap: Record<string, { x: number; y: number }> = {}
-  const COL_W = 230; const ROW_H = 110
-  for (const [d, ids] of Object.entries(byDepth)) {
-    ids.forEach((id, i) => {
-      posMap[id] = { x: Number(d) * COL_W + 40, y: i * ROW_H + 40 }
-    })
-  }
-  return nodes.map((n) => ({ ...n, position: posMap[n.id] ?? n.position }))
+  })
+}
+
+/** Grid layout: arranges all nodes in a compact grid regardless of connectivity. */
+function gridLayout(nodes: GraphFlowNode[]): GraphFlowNode[] {
+  const cols = Math.max(1, Math.ceil(Math.sqrt(nodes.length)))
+  return nodes.map((n, i) => ({
+    ...n,
+    position: { x: (i % cols) * 230 + 40, y: Math.floor(i / cols) * 110 + 40 },
+  }))
 }
 
 function GraphPage() {
@@ -1212,6 +1862,14 @@ function GraphPage() {
   const [runId, setRunId] = useState<string | null>(null)
   const [currentWorkflowId, setCurrentWorkflowId] = useState<number | null>(null)
   const [saveWorkflowName, setSaveWorkflowName] = useState("")
+
+  // ── Collapsible panel state (persisted to localStorage) ──
+  const [leftOpen, setLeftOpen] = useState<boolean>(() => localStorage.getItem("graph:leftOpen") !== "false")
+  const [rightOpen, setRightOpen] = useState<boolean>(() => localStorage.getItem("graph:rightOpen") !== "false")
+  const [bottomOpen, setBottomOpen] = useState<boolean>(() => localStorage.getItem("graph:bottomOpen") !== "false")
+  useEffect(() => { localStorage.setItem("graph:leftOpen", String(leftOpen)) }, [leftOpen])
+  useEffect(() => { localStorage.setItem("graph:rightOpen", String(rightOpen)) }, [rightOpen])
+  useEffect(() => { localStorage.setItem("graph:bottomOpen", String(bottomOpen)) }, [bottomOpen])
 
   const { data: nodeList = [], isLoading: nodesLoading } = useQuery<NodeInfo[]>({
     queryKey: ["graph-nodes"],
@@ -1406,6 +2064,7 @@ function GraphPage() {
         instance_id: n.id,
         node_type: n.data.nodeInfo.node_id,
         params: n.data.params,
+        bypassed: n.data.bypassed ?? false,
       })),
       edges: edges.map((e) => ({
         source_instance_id: e.source,
@@ -1471,6 +2130,16 @@ function GraphPage() {
     setSelectedNodeId(newId)
   }
 
+  // ── Bypass / un-bypass a node ──
+
+  function handleNodeBypass(id: string) {
+    setNodes((prev) =>
+      prev.map((n) =>
+        n.id === id ? { ...n, data: { ...n.data, bypassed: !n.data.bypassed } } : n,
+      ),
+    )
+  }
+
   // ── Edge connect ──
 
   const onConnect = useCallback(
@@ -1491,10 +2160,12 @@ function GraphPage() {
     setSaveWorkflowName("")
   }
 
-  // ── Auto-layout ──
+  // ── Auto-layout (LR, TB, or compact grid) ──
 
-  function handleAutoLayout() {
-    setNodes((prev) => computeAutoLayout(prev, edges))
+  function handleAutoLayout(dir: "LR" | "TB" | "grid") {
+    setNodes((prev) =>
+      dir === "grid" ? gridLayout(prev) : layoutNodes(prev, edges, dir),
+    )
   }
 
   // ── Clear canvas ──
@@ -1559,7 +2230,7 @@ function GraphPage() {
   const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null
 
   return (
-    <Box h="calc(100vh - 80px)" display="flex" flexDir="column">
+    <Box flex={1} display="flex" flexDir="column" overflow="hidden">
       {/* Hidden file input for JSON import */}
       <input ref={importRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleImport} />
 
@@ -1613,14 +2284,21 @@ function GraphPage() {
         >
           Clear
         </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          isDisabled={nodes.length === 0}
-          onClick={handleAutoLayout}
-        >
-          ⚙ Layout
-        </Button>
+        <Menu>
+          <MenuButton
+            as={Button}
+            size="sm"
+            variant="ghost"
+            isDisabled={nodes.length === 0}
+          >
+            ⚙ Layout ▾
+          </MenuButton>
+          <MenuList minW="140px">
+            <MenuItem fontSize="sm" onClick={() => handleAutoLayout("LR")}>→ Left to Right</MenuItem>
+            <MenuItem fontSize="sm" onClick={() => handleAutoLayout("TB")}>↓ Top to Bottom</MenuItem>
+            <MenuItem fontSize="sm" onClick={() => handleAutoLayout("grid")}>⊞ Compact Grid</MenuItem>
+          </MenuList>
+        </Menu>
 
         <Divider orientation="vertical" h="24px" />
 
@@ -1742,16 +2420,81 @@ function GraphPage() {
       </Flex>
 
       {/* Main area */}
-      <Flex flex={1} overflow="hidden">
+      <Flex flex={1} overflow="hidden" minH={0}>
         {nodesLoading ? (
           <Flex align="center" justify="center" flex={1}>
             <Spinner />
           </Flex>
         ) : (
           <>
-            <NodePalette nodeList={nodeList} />
+            {/* Left panel: collapsible node library */}
+            {leftOpen ? (
+              <Box
+                w="200px"
+                flexShrink={0}
+                bg="white"
+                borderRight="1px solid"
+                borderColor="gray.200"
+                overflow="visible"
+                position="relative"
+                display="flex"
+                flexDir="column"
+              >
+                <NodePalette nodeList={nodeList} />
+                <Box
+                  position="absolute"
+                  right="-10px"
+                  top="50%"
+                  transform="translateY(-50%)"
+                  bg="white"
+                  border="1px solid"
+                  borderColor="gray.300"
+                  borderRadius="full"
+                  w="20px"
+                  h="20px"
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  cursor="pointer"
+                  zIndex={10}
+                  boxShadow="sm"
+                  onClick={() => setLeftOpen(false)}
+                  title="Collapse node library"
+                  fontSize="sm"
+                  color="gray.500"
+                  _hover={{ bg: "gray.100" }}
+                  userSelect="none"
+                >
+                  ‹
+                </Box>
+              </Box>
+            ) : (
+              <Box
+                w="22px"
+                flexShrink={0}
+                bg="white"
+                borderRight="1px solid"
+                borderColor="gray.200"
+                cursor="pointer"
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                onClick={() => setLeftOpen(true)}
+                title="Expand node library"
+                _hover={{ bg: "blue.50" }}
+              >
+                <Text
+                  fontSize="10px"
+                  color="gray.400"
+                  sx={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+                  userSelect="none"
+                >
+                  LIBRARY
+                </Text>
+              </Box>
+            )}
 
-            {/* ReactFlowProvider supplies context so FlowWithDrop can call useReactFlow */}
+            {/* Canvas */}
             <ReactFlowProvider>
               <FlowWithDrop
                 nodes={nodes}
@@ -1764,17 +2507,134 @@ function GraphPage() {
                 onNodeDrop={handleNodeDrop}
                 onNodeDelete={handleNodeDelete}
                 onNodeDuplicate={handleNodeDuplicate}
+                onNodeBypass={handleNodeBypass}
                 selectedNodeId={selectedNodeId}
               />
             </ReactFlowProvider>
 
-            <NodeInspector node={selectedNode} runResult={runResult} onChange={handleParamChange} />
+            {/* Right panel: collapsible node inspector */}
+            {rightOpen ? (
+              <Box
+                flexShrink={0}
+                bg="white"
+                borderRight="1px solid"
+                borderColor="gray.300"
+                overflow="visible"
+                position="relative"
+                display="flex"
+                flexDir="column"
+              >
+              {/* </Box><Box position="relative" flexShrink={0}> */}
+                <Box
+                  position="absolute"
+                  left="-10px"
+                  top="50%"
+                  transform="translateY(-50%)"
+                  bg="white"
+                  border="1px solid"
+                  borderColor="gray.300"
+                  borderRadius="full"
+                  w="20px"
+                  h="20px"
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  cursor="pointer"
+                  zIndex={10}
+                  boxShadow="sm"
+                  onClick={() => setRightOpen(false)}
+                  title="Collapse inspector"
+                  fontSize="sm"
+                  color="gray.500"
+                  _hover={{ bg: "gray.100" }}
+                  userSelect="none"
+                >
+                  ›
+                </Box>
+                <NodeInspector node={selectedNode} runResult={runResult} onChange={handleParamChange} allEdges={edges} />
+              </Box>
+            ) : (
+              <Box
+                w="22px"
+                flexShrink={0}
+                bg="white"
+                borderLeft="1px solid"
+                borderColor="gray.200"
+                cursor="pointer"
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                onClick={() => setRightOpen(true)}
+                title="Expand inspector"
+                _hover={{ bg: "blue.50" }}
+              >
+                <Text
+                  fontSize="10px"
+                  color="gray.400"
+                  sx={{ writingMode: "vertical-rl" }}
+                  userSelect="none"
+                >
+                  INSPECTOR
+                </Text>
+              </Box>
+            )}
           </>
         )}
       </Flex>
 
-      {/* Results pane */}
-      <ResultsPane runId={runId} status={runStatus} result={runResult} />
+      {/* Bottom: collapsible results panel */}
+      {bottomOpen ? (
+        <Box borderTop="1px solid" borderColor="gray.200" flexShrink={0}>
+          <Flex
+            bg="gray.50"
+            px={3}
+            py={1}
+            align="center"
+            borderBottom="1px solid"
+            borderColor="gray.200"
+            cursor="pointer"
+            _hover={{ bg: "gray.100" }}
+            onClick={() => setBottomOpen(false)}
+            userSelect="none"
+          >
+            <Text fontSize="xs" fontWeight="semibold" color="gray.600" flex={1}>
+              ▾ Run Output
+            </Text>
+            <Text fontSize="xs" color="gray.400">Click to collapse</Text>
+          </Flex>
+          <ResultsPane runId={runId} status={runStatus} result={runResult} nodes={nodes} />
+        </Box>
+      ) : (
+        <Box
+          borderTop="1px solid"
+          borderColor="gray.200"
+          bg="gray.50"
+          px={3}
+          py={1}
+          cursor="pointer"
+          _hover={{ bg: "gray.100" }}
+          onClick={() => setBottomOpen(true)}
+          userSelect="none"
+          flexShrink={0}
+        >
+          <Flex align="center" gap={2}>
+            <Text fontSize="xs" fontWeight="semibold" color="gray.600">▸ Run Output</Text>
+            {runStatus && (
+              <Badge
+                colorScheme={
+                  runStatus.status === "success" ? "green" :
+                  runStatus.status === "error" ? "red" :
+                  runStatus.status === "running" ? "blue" : "yellow"
+                }
+                fontSize="2xs"
+              >
+                {runStatus.status}
+              </Badge>
+            )}
+            {!runId && <Text fontSize="xs" color="gray.400">No run yet</Text>}
+          </Flex>
+        </Box>
+      )}
     </Box>
   )
 }

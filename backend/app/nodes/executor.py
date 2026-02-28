@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from typing import Any, Optional
 
 from pydantic import BaseModel
@@ -45,6 +46,7 @@ class NodeInstance(BaseModel):
     instance_id: str
     node_type: str
     params: dict[str, Any] = {}
+    bypassed: bool = False
 
 
 class Edge(BaseModel):
@@ -194,14 +196,24 @@ def _deserialize_value(value: Any) -> Any:
     return value
 
 
-def serialize_outputs(outputs: dict[str, dict[str, Any]], run_id: str) -> str:
-    """Serialize all node outputs to a JSON string for database storage."""
+def serialize_outputs(
+    outputs: dict[str, dict[str, Any]],
+    run_id: str,
+    timings: dict[str, float] | None = None,
+) -> str:
+    """Serialize all node outputs to a JSON string for database storage.
+
+    If *timings* is provided it is injected as ``"_timings_"`` at the top
+    level of the result JSON so the frontend execution-log drawer can read it.
+    """
     result: dict[str, dict[str, Any]] = {}
     for instance_id, slots in outputs.items():
         result[instance_id] = {
             slot: _serialize_value(val, run_id, instance_id, slot)
             for slot, val in slots.items()
         }
+    if timings is not None:
+        result["_timings_"] = timings  # type: ignore[assignment]
     return json.dumps(result, default=str)
 
 
@@ -242,7 +254,7 @@ class NodeExecutor:
         self,
         plan: ExecutionPlan,
         run_id: str,
-    ) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, str], dict[str, float]]:
         """Execute all nodes in topological order.
 
         Returns
@@ -250,13 +262,17 @@ class NodeExecutor:
         outputs : dict[instance_id, dict[slot, value]]
             Live Python objects passed between nodes.
         statuses : dict[instance_id, str]
-            "success", "cached", or "error: <message>" per node.
+            "success", "cached", "bypassed", or "error: <message>" per node.
+        timings : dict[instance_id, float]
+            Wall-clock seconds spent in each node's ``run()`` call.
+            Bypassed and cached nodes get 0.0.
         """
         from app.nodes.base import BaseNode
 
         outputs: dict[str, dict[str, Any]] = {}
         hashes: dict[str, str] = {}
         statuses: dict[str, str] = {}
+        timings: dict[str, float] = {}
 
         for instance_id in plan.ordered_ids:
             node_inst = plan.node_map[instance_id]
@@ -270,6 +286,25 @@ class NodeExecutor:
                 node_inputs[edge.target_slot] = upstream_slots.get(edge.source_slot)
                 input_hashes[edge.target_slot] = hashes.get(edge.source_instance_id, "")
 
+            # ── Bypass: pass the first upstream input straight through ──────
+            if node_inst.bypassed:
+                # Discover what output slot names this node normally produces
+                node_obj = BaseNode._instances.get(node_inst.node_type)
+                output_slot_names: list[str] = (
+                    [s.name for s in node_obj.outputs]
+                    if node_obj and node_obj.outputs
+                    else list(node_inputs.keys())  # fallback: mirror input slots
+                )
+                # Use the first available upstream value as the pass-through value
+                passthrough = next(iter(node_inputs.values()), None)
+                bypass_outputs = {slot: passthrough for slot in output_slot_names}
+                outputs[instance_id] = bypass_outputs
+                hashes[instance_id] = _node_hash(node_inst.node_type, {"bypassed": True}, input_hashes)
+                statuses[instance_id] = "bypassed"
+                timings[instance_id] = 0.0
+                logger.debug("Bypassed node %r, passing through %d slot(s)", instance_id, len(bypass_outputs))
+                continue
+
             # Compute cache key
             node_h = _node_hash(node_inst.node_type, node_inst.params, input_hashes)
 
@@ -280,6 +315,7 @@ class NodeExecutor:
                 }
                 hashes[instance_id] = node_h
                 statuses[instance_id] = "cached"
+                timings[instance_id] = 0.0
                 logger.debug("Cache hit: %r (hash %s…)", instance_id, node_h[:8])
                 continue
 
@@ -303,7 +339,9 @@ class NodeExecutor:
 
             # Run
             try:
+                _t0 = time.perf_counter()
                 result = node_obj.run(inputs=node_inputs, params=params_obj)
+                timings[instance_id] = round(time.perf_counter() - _t0, 3)
                 outputs[instance_id] = result
                 hashes[instance_id] = node_h
                 statuses[instance_id] = "success"
@@ -313,12 +351,13 @@ class NodeExecutor:
                     for k, v in result.items()
                 }
             except Exception as exc:
+                timings[instance_id] = round(time.perf_counter() - _t0, 3)
                 statuses[instance_id] = f"error: {exc}"
                 raise RuntimeError(
                     f"Node '{instance_id}' ({node_inst.node_type}) failed: {exc}"
                 ) from exc
 
-        return outputs, statuses
+        return outputs, statuses, timings
 
 
 # Shared executor instance — cache persists for the process lifetime

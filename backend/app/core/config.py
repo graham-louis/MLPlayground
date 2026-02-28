@@ -54,6 +54,9 @@ class Settings(BaseSettings):
         )
 
     NASS_API_KEY: str = ""
+    NOAA_CDO_TOKEN: str = ""
+    """NOAA Climate Data Online API token.
+    Request a free token at https://www.ncdc.noaa.gov/cdo-web/token"""
 
     ARTIFACTS_BASE: str = "/app/artifacts"
     """Root directory for all artifact storage (models, cache, exports, etc.).

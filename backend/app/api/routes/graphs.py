@@ -335,9 +335,9 @@ def _execute_graph_bg(run_id: str, spec: GraphSpec) -> None:
 
         try:
             plan = GraphBuilder().build(spec)
-            outputs, statuses = _EXECUTOR.execute(plan, run_id)
+            outputs, statuses, timings = _EXECUTOR.execute(plan, run_id)
             run.status = "success"
-            run.result = serialize_outputs(outputs, run_id)
+            run.result = serialize_outputs(outputs, run_id, timings=timings)
             run.node_statuses = json.dumps(statuses)
         except Exception as exc:
             logger.exception("Graph run %r failed.", run_id)
