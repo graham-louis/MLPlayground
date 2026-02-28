@@ -13,7 +13,7 @@ export const Route = createRootRoute({
 
 function RootLayout() {
   const { location } = useRouterState()
-  const isFullBleed = location.pathname === "/graph"
+  const isFullBleed = location.pathname === "/graph" || location.pathname === "/dashboard"
 
   return (
     <Box
@@ -29,6 +29,7 @@ function RootLayout() {
           <Heading size="md">🌱 MLPlayground</Heading>
           <Flex gap={6}>
             <Link href="/graph" color="white" fontWeight="medium">Graph</Link>
+            <Link href="/dashboard" color="white" fontWeight="medium">Dashboard</Link>
             <Link href="/" color="white" fontWeight="medium">Home</Link>
             <Link href="/explore" color="white" fontWeight="medium">Data Explorer</Link>
             <Link href="/model" color="white" fontWeight="medium">Model</Link>

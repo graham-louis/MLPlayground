@@ -16,6 +16,7 @@ POST /api/v1/graphs/run                   Submit a graph for async execution.
 GET  /api/v1/graphs/{run_id}/status       Poll run status.
 GET  /api/v1/graphs/{run_id}/result       Fetch completed run outputs.
 GET  /api/v1/graphs/artifacts/{path}      Download an artifact file.
+POST /api/v1/graphs/export/python         Export workflow as a standalone Python script.
 """
 from __future__ import annotations
 
@@ -24,6 +25,8 @@ import inspect
 import json
 import logging
 import os
+import re
+import textwrap
 import uuid
 from datetime import datetime as _dt
 from pathlib import Path
@@ -111,6 +114,7 @@ class DatasourceInfoResponse(BaseModel):
     key: str
     columns: list[DatasourceColumnInfo]
     query_params: list[str]  # names of accepted kwargs in ds.query()
+    scope_params: list[dict]  # scope_params spec from the datasource class
 
 
 class WorkflowCreateBody(BaseModel):
@@ -179,7 +183,12 @@ def datasource_info(key: str) -> DatasourceInfoResponse:
         p for p in sig.parameters
         if p not in ("self", "skip", "limit")
     ]
-    return DatasourceInfoResponse(key=key, columns=cols, query_params=query_params)
+    return DatasourceInfoResponse(
+        key=key,
+        columns=cols,
+        query_params=query_params,
+        scope_params=type(ds).scope_params,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +507,122 @@ def stream_run_status(run_id: str) -> StreamingResponse:
             "Connection": "keep-alive",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /graphs/export/python  — export workflow as a standalone Python script
+# ---------------------------------------------------------------------------
+
+class ExportScriptResponse(BaseModel):
+    script: str
+
+
+def _slugify(text: str) -> str:
+    """Convert an arbitrary string to a safe Python identifier."""
+    slug = re.sub(r"[^0-9a-zA-Z_]", "_", text)
+    if slug and slug[0].isdigit():
+        slug = "_" + slug
+    return slug or "_node"
+
+
+def _generate_standalone_script(spec: GraphSpec) -> str:  # noqa: C901
+    """Return a pure-Python script reproducing the graph — no app.nodes.* imports.
+
+    Uses ``app.nodes.code_gen.generate_node_code`` to emit per-node snippets
+    using standard libraries (pandas, sklearn, matplotlib, etc.).
+    """
+    from app.nodes.code_gen import generate_node_code
+    from app.nodes.registry import NODE_REGISTRY
+
+    plan = GraphBuilder().build(spec)
+
+    # Accumulated standard-library import statements (de-duplicated)
+    all_imports: set[str] = {"import pandas as pd", "import numpy as np"}
+
+    # Per-node code blocks
+    node_blocks: list[str] = []
+
+    for step_num, iid in enumerate(plan.ordered_ids, start=1):
+        node_inst = plan.node_map[iid]
+        entry = NODE_REGISTRY.get(node_inst.node_type)
+        display = entry.display_name if entry else node_inst.node_type
+        slug = _slugify(iid)
+        ov = f"_nd_{slug}"
+        bypassed = node_inst.bypassed
+
+        # Resolve input_refs: map slot name → Python variable expression
+        input_refs: dict[str, str] = {}
+        for edge in plan.edge_map.get(iid, []):
+            src_slug = _slugify(edge.source_instance_id)
+            input_refs[edge.target_slot] = f"_nd_{src_slug}__{edge.source_slot}"
+
+        block_header = f"# ── Step {step_num}: {display} [{iid}]"
+
+        if bypassed:
+            # For bypassed nodes emit pass-through variable assignments
+            block_lines = [block_header, f"# (bypassed — passing inputs through)"]
+            for slot_name, ref_expr in input_refs.items():
+                block_lines.append(f"{ov}__{slot_name} = {ref_expr}")
+            if not input_refs:
+                block_lines.append(f"{ov}__dataframe = None  # no inputs")
+            node_blocks.append("\n".join(block_lines))
+            continue
+
+        extra_imports, body_lines = generate_node_code(
+            node_type=node_inst.node_type,
+            params=node_inst.params,
+            input_refs=input_refs,
+            output_var=ov,
+            display_name=display,
+            step=step_num,
+        )
+        all_imports.update(extra_imports)
+        node_blocks.append("\n".join([block_header] + body_lines))
+
+    header = textwrap.dedent(
+        """\
+        #!/usr/bin/env python
+        # -*- coding: utf-8 -*-
+        \"\"\"Auto-generated MLPlayground workflow — standalone script.
+        No MLPlayground server is required to run this file.
+        Dependencies: pandas, numpy, scikit-learn, matplotlib (install as needed).
+        \"\"\"
+        from __future__ import annotations
+
+        """
+    )
+
+    import_block = "\n".join(sorted(all_imports))
+    body = "\n\n".join(node_blocks)
+
+    # Print summary of final outputs
+    summary_lines = ["\n# ── Results ──"]
+    for iid in plan.ordered_ids:
+        slug = _slugify(iid)
+        ov = f"_nd_{slug}"
+        entry = NODE_REGISTRY.get(plan.node_map[iid].node_type)
+        outputs = entry.outputs if entry else []
+        for slot in outputs:
+            summary_lines.append(f"print(f'[{iid}] {slot}: {{type({ov}__{slot}).__name__}}')")
+
+    return header + import_block + "\n\n\n" + body + "\n" + "\n".join(summary_lines) + "\n"
+
+
+@router.post("/export/python", response_model=ExportScriptResponse)
+def export_python(spec: GraphSpec) -> ExportScriptResponse:
+    """Generate a standalone Python script reproducing this workflow.
+
+    Returns JSON ``{"script": "..."}`` so the caller can preview and/or
+    trigger a client-side download.
+    """
+    try:
+        script = _generate_standalone_script(spec)
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return ExportScriptResponse(script=script)
 
 
 # ---------------------------------------------------------------------------

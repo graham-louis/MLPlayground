@@ -14,6 +14,13 @@ import {
   MenuButton,
   MenuItem,
   MenuList,
+  Modal,
+  ModalBody,
+  ModalCloseButton,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
+  ModalOverlay,
   Popover,
   PopoverArrow,
   PopoverBody,
@@ -65,448 +72,30 @@ import {
   type NodeProps,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
+import MonacoEditor from "@monaco-editor/react"
 import dagre from "@dagrejs/dagre"
 import axios from "axios"
 import { useCallback, useEffect, useRef, useState } from "react"
+import type {
+  JsonSchemaProperty,
+  JsonSchema,
+  NodeInfo,
+  GraphNodeData,
+  DatasourceColumn,
+  ScopeParam,
+  DatasourceInfo,
+  WorkflowSummary,
+  WorkflowDetail,
+  GraphFlowNode,
+  RunStatus,
+  ContextMenuState,
+  RunResult,
+} from "../graphTypes"
+import { TEMPLATES } from "../templates"
 
 export const Route = createFileRoute("/graph")({
   component: GraphPage,
 })
-
-// ── Types ──────────────────────────────────────────────────────────────────
-
-interface JsonSchemaProperty {
-  type?: string
-  title?: string
-  description?: string
-  default?: unknown
-  enum?: string[]
-  items?: { type: string }
-}
-
-interface JsonSchema {
-  properties?: Record<string, JsonSchemaProperty>
-  required?: string[]
-  title?: string
-  type?: string
-}
-
-interface NodeInfo {
-  node_id: string
-  display_name: string
-  category: string
-  endpoint: string
-  description: string
-  inputs: string[]
-  outputs: string[]
-  params: string[]
-  params_schema: JsonSchema
-}
-
-// Data attached to each ReactFlow node.
-interface GraphNodeData {
-  nodeInfo: NodeInfo
-  params: Record<string, unknown>
-  runStatus?: string
-  label?: string        // user-provided custom name
-  bypassed?: boolean
-  [key: string]: unknown
-}
-
-interface DatasourceColumn {
-  name: string
-  type_str: string
-}
-
-interface DatasourceInfo {
-  key: string
-  columns: DatasourceColumn[]
-  query_params: string[]
-}
-
-interface WorkflowSummary {
-  id: number
-  name: string
-  description?: string
-  created_at: string
-  updated_at: string
-}
-
-interface WorkflowDetail extends WorkflowSummary {
-  graph_spec: string
-}
-
-type GraphFlowNode = Node<GraphNodeData>
-
-interface RunStatus {
-  run_id: string
-  status: "pending" | "running" | "success" | "error"
-  node_statuses?: Record<string, string>
-  error?: string
-  created_at?: string
-  updated_at?: string
-}
-
-interface ContextMenuState {
-  x: number
-  y: number
-  nodeId: string
-}
-
-interface RunResult {
-  run_id: string
-  status: string
-  result?: Record<string, unknown>
-}
-
-// ── Template workflows ─────────────────────────────────────────────────────
-
-// These seed the canvas with a small pre-built graph to help users get started.
-
-const TEMPLATES: Record<string, { nodes: GraphFlowNode[]; edges: Edge[] }> = {
-  "CSV → Filter": {
-    nodes: [
-      {
-        id: "n1",
-        type: "graphNode",
-        position: { x: 50, y: 150 },
-        data: {
-          nodeInfo: {
-            node_id: "csv_source", display_name: "CSV Source", category: "Sources",
-            endpoint: "", description: "Load CSV", inputs: [], outputs: ["dataframe"],
-            params: [], params_schema: {
-              properties: { file_path: { type: "string", title: "File Path", default: "/app/data/sample.csv" } },
-              required: ["file_path"],
-            },
-          },
-          params: { file_path: "/app/data/sample.csv" },
-        },
-      },
-      {
-        id: "n2",
-        type: "graphNode",
-        position: { x: 300, y: 150 },
-        data: {
-          nodeInfo: {
-            node_id: "filter", display_name: "Filter", category: "Transforms",
-            endpoint: "", description: "Filter rows", inputs: ["dataframe"], outputs: ["dataframe"],
-            params: [], params_schema: {
-              properties: {
-                column: { type: "string", title: "Column" },
-                operator: { type: "string", title: "Operator", enum: ["==", "!=", ">", "<", ">=", "<="] },
-                value: { type: "string", title: "Value" },
-              },
-              required: ["column", "operator", "value"],
-            },
-          },
-          params: { column: "year", operator: ">", value: "2010" },
-        },
-      },
-    ],
-    edges: [
-      { id: "e1-2", source: "n1", sourceHandle: "dataframe", target: "n2", targetHandle: "dataframe" },
-    ],
-  },
-
-  "Yield Prediction (Weather + Soil)": {
-    nodes: [
-      {
-        id: "t1",
-        type: "graphNode",
-        position: { x: 50, y: 50 },
-        data: {
-          nodeInfo: {
-            node_id: "database_source", display_name: "Yields", category: "Sources",
-            endpoint: "", description: "Crop yields", inputs: [], outputs: ["dataframe"],
-            params: [], params_schema: {
-              properties: {
-                datasource_key: { type: "string", title: "Datasource" },
-                filters_json: { type: "string", title: "Filters (JSON)", default: "{}" },
-                limit: { type: "integer", title: "Limit", default: 5000 },
-              },
-              required: ["datasource_key"],
-            },
-          },
-          params: { datasource_key: "yields", filters_json: "{}", limit: 5000 },
-        },
-      },
-      {
-        id: "t2",
-        type: "graphNode",
-        position: { x: 50, y: 220 },
-        data: {
-          nodeInfo: {
-            node_id: "database_source", display_name: "Weather", category: "Sources",
-            endpoint: "", description: "Annual weather", inputs: [], outputs: ["dataframe"],
-            params: [], params_schema: {
-              properties: {
-                datasource_key: { type: "string", title: "Datasource" },
-                filters_json: { type: "string", title: "Filters (JSON)", default: "{}" },
-                limit: { type: "integer", title: "Limit", default: 5000 },
-              },
-              required: ["datasource_key"],
-            },
-          },
-          params: { datasource_key: "weather", filters_json: "{}", limit: 5000 },
-        },
-      },
-      {
-        id: "t3",
-        type: "graphNode",
-        position: { x: 50, y: 390 },
-        data: {
-          nodeInfo: {
-            node_id: "database_source", display_name: "Soil", category: "Sources",
-            endpoint: "", description: "Soil properties", inputs: [], outputs: ["dataframe"],
-            params: [], params_schema: {
-              properties: {
-                datasource_key: { type: "string", title: "Datasource" },
-                filters_json: { type: "string", title: "Filters (JSON)", default: "{}" },
-                limit: { type: "integer", title: "Limit", default: 5000 },
-              },
-              required: ["datasource_key"],
-            },
-          },
-          params: { datasource_key: "soil", filters_json: "{}", limit: 5000 },
-        },
-      },
-      {
-        id: "t4",
-        type: "graphNode",
-        position: { x: 330, y: 130 },
-        data: {
-          nodeInfo: {
-            node_id: "join", display_name: "Join Yields+Weather", category: "Transforms",
-            endpoint: "", description: "Join on year/state/county", inputs: ["left", "right"], outputs: ["dataframe"],
-            params: [], params_schema: {
-              properties: {
-                on: { type: "array", items: { type: "string" }, title: "On" },
-                how: { type: "string", title: "How", enum: ["inner", "left", "right", "outer"], default: "inner" },
-              },
-              required: ["on"],
-            },
-          },
-          params: { on: ["year", "state", "county"], how: "inner" },
-        },
-      },
-      {
-        id: "t5",
-        type: "graphNode",
-        position: { x: 610, y: 200 },
-        data: {
-          nodeInfo: {
-            node_id: "join", display_name: "Join + Soil", category: "Transforms",
-            endpoint: "", description: "Join with soil on state/county", inputs: ["left", "right"], outputs: ["dataframe"],
-            params: [], params_schema: {
-              properties: {
-                on: { type: "array", items: { type: "string" }, title: "On" },
-                how: { type: "string", title: "How", enum: ["inner", "left", "right", "outer"], default: "inner" },
-              },
-              required: ["on"],
-            },
-          },
-          params: { on: ["state", "county"], how: "left" },
-        },
-      },
-      {
-        id: "t6",
-        type: "graphNode",
-        position: { x: 890, y: 200 },
-        data: {
-          nodeInfo: {
-            node_id: "select_columns", display_name: "Select Features", category: "Transforms",
-            endpoint: "", description: "Keep relevant columns", inputs: ["dataframe"], outputs: ["dataframe"],
-            params: [], params_schema: {
-              properties: {
-                columns: { type: "array", items: { type: "string" }, title: "Columns" },
-              },
-              required: ["columns"],
-            },
-          },
-          params: {
-            columns: ["year", "state", "county", "crop", "value",
-              "avg_temp", "precipitation", "gdd", "ph", "organic_matter", "sand_pct", "clay_pct"],
-          },
-        },
-      },
-      {
-        id: "t7",
-        type: "graphNode",
-        position: { x: 1120, y: 200 },
-        data: {
-          nodeInfo: {
-            node_id: "drop_na", display_name: "Drop NA", category: "Transforms",
-            endpoint: "", description: "Remove rows with missing values", inputs: ["dataframe"], outputs: ["dataframe"],
-            params: [], params_schema: {
-              properties: {
-                columns: { type: "array", items: { type: "string" }, title: "Columns", default: [] },
-              },
-            },
-          },
-          params: { columns: [] },
-        },
-      },
-      {
-        id: "t9",
-        type: "graphNode",
-        position: { x: 1350, y: 150 },
-        data: {
-          nodeInfo: {
-            node_id: "trainer", display_name: "Train Yield Model", category: "Modeling",
-            endpoint: "", description: "Random forest yield predictor", inputs: ["dataframe"],
-            outputs: ["model", "metrics", "artifact_path", "feature_names"],
-            params: [], params_schema: {
-              properties: {
-                model_type: { type: "string", title: "Model Type", enum: ["linear_regression", "random_forest", "gradient_boosting"], default: "random_forest" },
-                target_column: { type: "string", title: "Target Column", default: "crop_yield" },
-                feature_columns: { type: "array", items: { type: "string" }, title: "Feature Columns", default: [] },
-                test_size: { type: "number", title: "Test Size", default: 0.2 },
-                random_state: { type: "integer", title: "Random State", default: 42 },
-              },
-            },
-          },
-          params: {
-            model_type: "random_forest",
-            target_column: "value",
-            feature_columns: ["avg_temp", "precipitation", "gdd", "ph", "organic_matter", "sand_pct", "clay_pct"],
-            test_size: 0.2,
-            random_state: 42,
-          },
-        },
-      },
-    ],
-    edges: [
-      { id: "et1-t4", source: "t1", sourceHandle: "dataframe", target: "t4", targetHandle: "left" },
-      { id: "et2-t4", source: "t2", sourceHandle: "dataframe", target: "t4", targetHandle: "right" },
-      { id: "et4-t5", source: "t4", sourceHandle: "dataframe", target: "t5", targetHandle: "left" },
-      { id: "et3-t5", source: "t3", sourceHandle: "dataframe", target: "t5", targetHandle: "right" },
-      { id: "et5-t6", source: "t5", sourceHandle: "dataframe", target: "t6", targetHandle: "dataframe" },
-      { id: "et6-t7", source: "t6", sourceHandle: "dataframe", target: "t7", targetHandle: "dataframe" },
-      { id: "et7-t9", source: "t7", sourceHandle: "dataframe", target: "t9", targetHandle: "dataframe" },
-    ],
-  },
-
-  "NOAA Weather → Plot": {
-    nodes: [
-      {
-        id: "r1",
-        type: "graphNode",
-        position: { x: 60, y: 160 },
-        data: {
-          nodeInfo: {
-            node_id: "remote_fetch",
-            display_name: "NOAA Annual Weather",
-            category: "Sources",
-            endpoint: "",
-            description: "Fetch NOAA GSOY data for a US state",
-            inputs: [],
-            outputs: ["dataframe"],
-            params: ["datasource_key", "scope_params_json"],
-            params_schema: {
-              properties: {
-                datasource_key: {
-                  type: "string",
-                  title: "Datasource Key",
-                  description: "Registered ingest datasource key",
-                  default: "noaa_gsoy",
-                },
-                scope_params_json: {
-                  type: "string",
-                  title: "Scope Params (JSON)",
-                  description: "Keys match the datasource's scope_params",
-                  default: "{}",
-                },
-              },
-              required: ["datasource_key"],
-            },
-          },
-          params: {
-            datasource_key: "noaa_gsoy",
-            scope_params_json: JSON.stringify({
-              state: "NC",
-              start_year: 2015,
-              end_year: 2022,
-              variables: ["TAVG", "PRCP"],
-            }),
-          },
-          label: "NOAA Weather (NC)",
-        },
-      },
-      {
-        id: "r2",
-        type: "graphNode",
-        position: { x: 340, y: 80 },
-        data: {
-          nodeInfo: {
-            node_id: "plot",
-            display_name: "Avg Temperature over Time",
-            category: "Visualization",
-            endpoint: "",
-            description: "Line chart of TAVG by year",
-            inputs: ["dataframe"],
-            outputs: ["figure"],
-            params: ["plot_type", "x_column", "y_column", "color_column", "title"],
-            params_schema: {
-              properties: {
-                plot_type: { type: "string", title: "Plot Type", enum: ["scatter", "line", "histogram", "bar", "box"], default: "line" },
-                x_column:  { type: "string", title: "X Column",  default: "" },
-                y_column:  { type: "string", title: "Y Column",  default: "" },
-                color_column: { type: "string", title: "Colour Column", default: "" },
-                title: { type: "string", title: "Title", default: "" },
-              },
-            },
-          },
-          params: {
-            plot_type: "line",
-            x_column: "year",
-            y_column: "tavg",
-            color_column: "station",
-            title: "Average Annual Temperature — NC",
-          },
-          label: "Temp over Time",
-        },
-      },
-      {
-        id: "r3",
-        type: "graphNode",
-        position: { x: 340, y: 280 },
-        data: {
-          nodeInfo: {
-            node_id: "plot",
-            display_name: "Precipitation over Time",
-            category: "Visualization",
-            endpoint: "",
-            description: "Bar chart of PRCP by year",
-            inputs: ["dataframe"],
-            outputs: ["figure"],
-            params: ["plot_type", "x_column", "y_column", "color_column", "title"],
-            params_schema: {
-              properties: {
-                plot_type: { type: "string", title: "Plot Type", enum: ["scatter", "line", "histogram", "bar", "box"], default: "bar" },
-                x_column:  { type: "string", title: "X Column",  default: "" },
-                y_column:  { type: "string", title: "Y Column",  default: "" },
-                color_column: { type: "string", title: "Colour Column", default: "" },
-                title: { type: "string", title: "Title", default: "" },
-              },
-            },
-          },
-          params: {
-            plot_type: "bar",
-            x_column: "year",
-            y_column: "prcp",
-            color_column: "",
-            title: "Annual Precipitation — NC",
-          },
-          label: "Precip over Time",
-        },
-      },
-    ],
-    edges: [
-      { id: "er1-r2", source: "r1", sourceHandle: "dataframe", target: "r2", targetHandle: "dataframe" },
-      { id: "er1-r3", source: "r1", sourceHandle: "dataframe", target: "r3", targetHandle: "dataframe" },
-    ],
-  },
-}
 
 // ── Custom ReactFlow node component ───────────────────────────────────────
 
@@ -916,6 +505,107 @@ function DatasourceFilterForm({
   )
 }
 
+// ── Scope params form for remote_fetch node ───────────────────────────────
+// Renders one typed input per entry in a datasource's scope_params spec,
+// reading/writing the inspector's scope_params_json string transparently.
+
+function ScopeParamsForm({
+  datasourceKey,
+  scopeParamsJson,
+  onChange,
+}: {
+  datasourceKey: string
+  scopeParamsJson: string
+  onChange: (json: string) => void
+}) {
+  const { data: info, isLoading } = useQuery<DatasourceInfo>({
+    queryKey: ["datasource-info", datasourceKey],
+    queryFn: () => axios.get(`/api/v1/graphs/datasource-info/${datasourceKey}`).then((r) => r.data),
+    enabled: !!datasourceKey,
+  })
+
+  let values: Record<string, unknown> = {}
+  try { values = JSON.parse(scopeParamsJson || "{}") } catch { /* ignore */ }
+
+  function update(name: string, val: unknown) {
+    onChange(JSON.stringify({ ...values, [name]: val }))
+  }
+
+  if (!datasourceKey) return <Text fontSize="xs" color="gray.400">Select a datasource first.</Text>
+  if (isLoading) return <Spinner size="xs" />
+
+  const scopeParams = info?.scope_params ?? []
+  if (scopeParams.length === 0) return <Text fontSize="xs" color="gray.400">No scope parameters.</Text>
+
+  return (
+    <Stack spacing={2}>
+      <Text fontSize="xs" fontWeight="semibold" color="gray.500">Scope Parameters</Text>
+      {scopeParams.map((spec) => {
+        const val = values[spec.name] ?? spec.default
+        const label = spec.label ?? spec.name
+
+        if (spec.type === "integer" || spec.type === "float") {
+          return (
+            <FormControl key={spec.name} size="sm">
+              <ParamLabel label={label} description={spec.description} />
+              <Input
+                size="sm"
+                type="number"
+                value={String(val ?? "")}
+                onChange={(e) =>
+                  update(spec.name, spec.type === "integer" ? parseInt(e.target.value) : parseFloat(e.target.value))
+                }
+              />
+            </FormControl>
+          )
+        }
+
+        if (spec.type === "boolean") {
+          return (
+            <FormControl key={spec.name} display="flex" alignItems="center" size="sm">
+              <FormLabel fontSize="xs" mb={0} mr={2}>
+                {spec.description ? (
+                  <Tooltip label={spec.description} placement="top" hasArrow>
+                    <Text as="span" cursor="help" borderBottom="1px dashed" borderColor="gray.400">{label}</Text>
+                  </Tooltip>
+                ) : label}
+              </FormLabel>
+              <Switch size="sm" isChecked={Boolean(val)} onChange={(e) => update(spec.name, e.target.checked)} />
+            </FormControl>
+          )
+        }
+
+        if (spec.type === "string_list") {
+          const arrVal: string[] = Array.isArray(val) ? (val as unknown[]).map(String) : []
+          return (
+            <FormControl key={spec.name} size="sm">
+              <ParamLabel label={label} description={spec.description} />
+              <ColumnToggleSelect
+                value={arrVal}
+                availableColumns={[]}
+                onChange={(v) => update(spec.name, v)}
+              />
+            </FormControl>
+          )
+        }
+
+        // Default: string
+        return (
+          <FormControl key={spec.name} size="sm">
+            <ParamLabel label={label} description={spec.description} />
+            <Input
+              size="sm"
+              value={String(val ?? "")}
+              onChange={(e) => update(spec.name, e.target.value)}
+              placeholder={spec.placeholder ?? spec.description ?? ""}
+            />
+          </FormControl>
+        )
+      })}
+    </Stack>
+  )
+}
+
 function DatasourceKeySelect({
   value,
   onChange,
@@ -1095,9 +785,13 @@ function NodeInspector({
   onChange: (nodeId: string, params: Record<string, unknown>) => void
   allEdges: Edge[]
 }) {
+  // Monaco code-editor modal state — must live before early returns (hooks rules)
+  const [codeModalKey, setCodeModalKey] = useState<string | null>(null)
+  const [codeModalValue, setCodeModalValue] = useState<string>("")
+
   if (!node) {
     return (
-      <Box w="220px" bg="white" borderLeft="1px solid" borderColor="gray.200" p={3}>
+      <Box w="280px" bg="white" borderLeft="1px solid" borderColor="gray.200" p={3}>
         <Text fontSize="sm" color="gray.400">Select a node to edit its parameters.</Text>
       </Box>
     )
@@ -1133,7 +827,7 @@ function NodeInspector({
   }
 
   return (
-    <Box w="220px" bg="white" borderLeft="1px solid" borderColor="gray.200" p={3} overflowY="auto">
+    <Box w="280px" bg="white" borderLeft="1px solid" borderColor="gray.200" p={3} overflowY="auto">
       <Text fontWeight="bold" fontSize="sm" mb={1}>{nodeInfo.display_name}</Text>
       <Text fontSize="xs" color="gray.500" mb={3}>{nodeInfo.description}</Text>
 
@@ -1163,6 +857,20 @@ function NodeInspector({
                 <DatasourceFilterForm
                   datasourceKey={dsKey}
                   filtersJson={String(value ?? "{}")}
+                  onChange={(v) => update(key, v)}
+                />
+              </Box>
+            )
+          }
+
+          // scope_params_json → individual typed fields from datasource's scope_params spec
+          if (key === "scope_params_json") {
+            const dsKey = String((params as Record<string, unknown>).datasource_key ?? "")
+            return (
+              <Box key={key}>
+                <ScopeParamsForm
+                  datasourceKey={dsKey}
+                  scopeParamsJson={String(value ?? "{}")}
                   onChange={(v) => update(key, v)}
                 />
               </Box>
@@ -1294,6 +1002,108 @@ function NodeInspector({
                   }
                   placeholder="comma-separated values"
                 />
+              </FormControl>
+            )
+          }
+
+          // Monaco editor — triggered by ui_widget: "monaco" in JSON schema extra
+          // Rendered as a compact read-only preview + "Edit Code" button that
+          // opens a full-size modal editor.
+          if ((prop as Record<string, unknown>).ui_widget === "monaco") {
+            const language = String((prop as Record<string, unknown>).language ?? "python")
+            const codeValue = String(value ?? prop.default ?? "")
+            const previewLines = codeValue.split("\n").slice(0, 5).join("\n")
+            return (
+              <FormControl key={key} size="sm">
+                <Flex align="center" justify="space-between" mb={1}>
+                  <ParamLabel label={label} description={prop.description} />
+                  <Button
+                    size="xs"
+                    colorScheme="purple"
+                    variant="ghost"
+                    onClick={() => {
+                      setCodeModalKey(key)
+                      setCodeModalValue(codeValue)
+                    }}
+                  >
+                    ✏ Edit Code
+                  </Button>
+                </Flex>
+                {/* Read-only mini preview */}
+                <Box
+                  bg="gray.50"
+                  border="1px solid"
+                  borderColor="gray.200"
+                  borderRadius="md"
+                  p={2}
+                  fontFamily="mono"
+                  fontSize="10px"
+                  color="gray.600"
+                  whiteSpace="pre"
+                  overflow="hidden"
+                  maxH="72px"
+                  cursor="pointer"
+                  _hover={{ borderColor: "purple.300", bg: "purple.50" }}
+                  onClick={() => {
+                    setCodeModalKey(key)
+                    setCodeModalValue(codeValue)
+                  }}
+                >
+                  {previewLines || "# (empty)"}
+                  {codeValue.split("\n").length > 5 && (
+                    <Text as="span" color="gray.400"> …</Text>
+                  )}
+                </Box>
+
+                {/* Full-screen editor modal */}
+                <Modal
+                  isOpen={codeModalKey === key}
+                  onClose={() => setCodeModalKey(null)}
+                  size="5xl"
+                  scrollBehavior="inside"
+                >
+                  <ModalOverlay />
+                  <ModalContent maxW="900px">
+                    <ModalHeader fontSize="sm" py={3}>
+                      Edit Code — <Text as="span" fontFamily="mono" color="purple.600">{label}</Text>
+                    </ModalHeader>
+                    <ModalCloseButton />
+                    <ModalBody p={0}>
+                      <Box border="1px solid" borderColor="gray.200" borderRadius="md" overflow="hidden" m={4}>
+                        <MonacoEditor
+                          height="520px"
+                          language={language}
+                          value={codeModalValue}
+                          onChange={(v) => setCodeModalValue(v ?? "")}
+                          options={{
+                            minimap: { enabled: false },
+                            fontSize: 13,
+                            lineNumbers: "on",
+                            scrollBeyondLastLine: false,
+                            wordWrap: "on",
+                            tabSize: 4,
+                            automaticLayout: true,
+                          }}
+                        />
+                      </Box>
+                    </ModalBody>
+                    <ModalFooter gap={2}>
+                      <Button
+                        colorScheme="purple"
+                        size="sm"
+                        onClick={() => {
+                          update(key, codeModalValue)
+                          setCodeModalKey(null)
+                        }}
+                      >
+                        Save
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setCodeModalKey(null)}>
+                        Cancel
+                      </Button>
+                    </ModalFooter>
+                  </ModalContent>
+                </Modal>
               </FormControl>
             )
           }
@@ -1851,17 +1661,30 @@ function gridLayout(nodes: GraphFlowNode[]): GraphFlowNode[] {
   }))
 }
 
+/** Stable string representation of graph topology for layout-cache keying. */
+function layoutSignature(nodes: GraphFlowNode[], edges: Edge[]): string {
+  const nodeIds = nodes.map((n) => n.id).sort().join(",")
+  const edgeKeys = edges.map((e) => `${e.source}->${e.target}`).sort().join(",")
+  return `${nodes.length}:${edges.length}:${nodeIds}:${edgeKeys}`
+}
+
 function GraphPage() {
   const toast = useToast()
   const queryClient = useQueryClient()
   const importRef = useRef<HTMLInputElement>(null)
   const clipboardRef = useRef<GraphFlowNode | null>(null)
+  const restoredLayoutSigRef = useRef<string>("")
   const [nodes, setNodes, onNodesChange] = useNodesState<GraphFlowNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [runId, setRunId] = useState<string | null>(null)
   const [currentWorkflowId, setCurrentWorkflowId] = useState<number | null>(null)
   const [saveWorkflowName, setSaveWorkflowName] = useState("")
+
+  // ── Export Python preview modal ──
+  const [exportPreviewOpen, setExportPreviewOpen] = useState(false)
+  const [exportPreviewScript, setExportPreviewScript] = useState("")
+  const [exportPreviewLoading, setExportPreviewLoading] = useState(false)
 
   // ── Collapsible panel state (persisted to localStorage) ──
   const [leftOpen, setLeftOpen] = useState<boolean>(() => localStorage.getItem("graph:leftOpen") !== "false")
@@ -1870,6 +1693,24 @@ function GraphPage() {
   useEffect(() => { localStorage.setItem("graph:leftOpen", String(leftOpen)) }, [leftOpen])
   useEffect(() => { localStorage.setItem("graph:rightOpen", String(rightOpen)) }, [rightOpen])
   useEffect(() => { localStorage.setItem("graph:bottomOpen", String(bottomOpen)) }, [bottomOpen])
+
+  // 4.2 — Restore layout positions from sessionStorage when graph topology changes
+  useEffect(() => {
+    if (nodes.length === 0) return
+    const sig = layoutSignature(nodes, edges)
+    if (restoredLayoutSigRef.current === sig) return
+    const cached = sessionStorage.getItem(`graph:layout:${sig}`)
+    if (!cached) return
+    restoredLayoutSigRef.current = sig
+    try {
+      const positions: Record<string, { x: number; y: number }> = JSON.parse(cached)
+      setNodes((prev) =>
+        prev.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n)),
+      )
+    } catch { /* malformed cache — ignore */ }
+  // biome-ignore lint/react-hooks/exhaustive-deps: only trigger on topology changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes.length, edges.length])
 
   const { data: nodeList = [], isLoading: nodesLoading } = useQuery<NodeInfo[]>({
     queryKey: ["graph-nodes"],
@@ -2163,9 +2004,16 @@ function GraphPage() {
   // ── Auto-layout (LR, TB, or compact grid) ──
 
   function handleAutoLayout(dir: "LR" | "TB" | "grid") {
-    setNodes((prev) =>
-      dir === "grid" ? gridLayout(prev) : layoutNodes(prev, edges, dir),
-    )
+    setNodes((prev) => {
+      const newNodes = dir === "grid" ? gridLayout(prev) : layoutNodes(prev, edges, dir)
+      const sig = layoutSignature(newNodes, edges)
+      try {
+        const positions = Object.fromEntries(newNodes.map((n) => [n.id, n.position]))
+        sessionStorage.setItem(`graph:layout:${sig}`, JSON.stringify(positions))
+      } catch { /* storage quota exceeded — ignore */ }
+      restoredLayoutSigRef.current = sig
+      return newNodes
+    })
   }
 
   // ── Clear canvas ──
@@ -2188,6 +2036,35 @@ function GraphPage() {
     const a = document.createElement("a")
     a.href = url
     a.download = "graph.json"
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  // ── Export workflow as standalone Python script ──
+
+  async function handleExportPython() {
+    setExportPreviewLoading(true)
+    try {
+      const spec = buildSpec()
+      const resp = await axios.post<{ script: string }>("/api/v1/graphs/export/python", spec)
+      setExportPreviewScript(resp.data.script)
+      setExportPreviewOpen(true)
+    } catch (err: unknown) {
+      const detail =
+        err && typeof err === "object" && "response" in err
+          ? ((err as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Unknown error")
+          : "Request failed"
+      toast({ title: "Export failed", description: String(detail), status: "error", duration: 4000 })
+    } finally {
+      setExportPreviewLoading(false)
+    }
+  }
+
+  function downloadScript(script: string) {
+    const url = URL.createObjectURL(new Blob([script], { type: "text/x-python" }))
+    const a = document.createElement("a")
+    a.href = url
+    a.download = "workflow.py"
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -2385,7 +2262,18 @@ function GraphPage() {
         </Menu>
 
         <Button size="sm" variant="ghost" onClick={handleExport} isDisabled={nodes.length === 0}>
-          ↓ Export
+          ↓ Export JSON
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          colorScheme="purple"
+          isDisabled={nodes.length === 0}
+          isLoading={exportPreviewLoading}
+          loadingText="Generating…"
+          onClick={handleExportPython}
+        >
+          ↓ Export Python
         </Button>
         <Button size="sm" variant="ghost" onClick={() => importRef.current?.click()}>
           ↑ Import
@@ -2635,6 +2523,59 @@ function GraphPage() {
           </Flex>
         </Box>
       )}
+
+      {/* ── Export Python preview modal ── */}
+      <Modal
+        isOpen={exportPreviewOpen}
+        onClose={() => setExportPreviewOpen(false)}
+        size="6xl"
+        scrollBehavior="inside"
+      >
+        <ModalOverlay />
+        <ModalContent maxW="1000px">
+          <ModalHeader fontSize="sm" py={3}>
+            Python Script Preview
+            <Text as="span" fontSize="xs" color="gray.500" fontWeight="normal" ml={2}>
+              — standalone, no MLPlayground dependencies
+            </Text>
+          </ModalHeader>
+          <ModalCloseButton />
+          <ModalBody p={0}>
+            <Box m={4} border="1px solid" borderColor="gray.200" borderRadius="md" overflow="hidden">
+              <MonacoEditor
+                height="520px"
+                language="python"
+                value={exportPreviewScript}
+                options={{
+                  readOnly: true,
+                  minimap: { enabled: true },
+                  fontSize: 13,
+                  lineNumbers: "on",
+                  scrollBeyondLastLine: false,
+                  wordWrap: "off",
+                  automaticLayout: true,
+                }}
+              />
+            </Box>
+          </ModalBody>
+          <ModalFooter gap={2}>
+            <Button
+              colorScheme="purple"
+              size="sm"
+              leftIcon={<Text>↓</Text>}
+              onClick={() => {
+                downloadScript(exportPreviewScript)
+                setExportPreviewOpen(false)
+              }}
+            >
+              Download workflow.py
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setExportPreviewOpen(false)}>
+              Close
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </Box>
   )
 }
