@@ -21,19 +21,23 @@ class DatasourceEntry:
         node_id: str,
         display_name: str,
         endpoint: str,
+        category: str = "Unknown",
         description: str = "",
         inputs: Optional[list[str]] = None,
         outputs: Optional[list[str]] = None,
         params: Optional[list[str]] = None,
+        params_schema: Optional[dict] = None,
         run_fn: Optional[Callable[..., Any]] = None,
     ) -> None:
         self.node_id = node_id
         self.display_name = display_name
         self.endpoint = endpoint
+        self.category = category
         self.description = description
         self.inputs = inputs or []
         self.outputs = outputs or []
         self.params = params or []
+        self.params_schema = params_schema or {}
         self.run_fn = run_fn
 
     def to_dict(self) -> dict[str, Any]:
@@ -41,10 +45,12 @@ class DatasourceEntry:
             "node_id": self.node_id,
             "display_name": self.display_name,
             "endpoint": self.endpoint,
+            "category": self.category,
             "description": self.description,
             "inputs": self.inputs,
             "outputs": self.outputs,
             "params": self.params,
+            "params_schema": self.params_schema,
         }
     
 class NodeRegistry:
@@ -58,10 +64,12 @@ class NodeRegistry:
         node_id: str,
         display_name: str,
         endpoint: str,
+        category: str = "Unknown",
         description: str = "",
         inputs: Optional[list[str]] = None,
         outputs: Optional[list[str]] = None,
         params: Optional[list[str]] = None,
+        params_schema: Optional[dict] = None,
         run_fn: Optional[Callable[..., Any]] = None,
     ) -> None:
         if node_id in self._entries:
@@ -70,10 +78,12 @@ class NodeRegistry:
             node_id=node_id,
             display_name=display_name,
             endpoint=endpoint,
+            category=category,
             description=description,
             inputs=inputs,
             outputs=outputs,
             params=params,
+            params_schema=params_schema,
             run_fn=run_fn
         )
         logger.debug("NodeRegistry: registered node key=%r", node_id)

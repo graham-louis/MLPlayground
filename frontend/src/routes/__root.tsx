@@ -19,6 +19,7 @@ function RootLayout() {
         <Flex align="center" justify="space-between" maxW="1200px" mx="auto">
           <Heading size="md">🌱 MLPlayground</Heading>
           <Flex gap={6}>
+            <Link href="/graph" color="white" fontWeight="medium">Graph</Link>
             <Link href="/" color="white" fontWeight="medium">Home</Link>
             <Link href="/explore" color="white" fontWeight="medium">Data Explorer</Link>
             <Link href="/model" color="white" fontWeight="medium">Model</Link>

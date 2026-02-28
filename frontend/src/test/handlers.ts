@@ -55,7 +55,235 @@ export const MODEL_RUNS_RESPONSE = {
   count: 1,
 }
 
+export const GRAPH_NODES_RESPONSE: {
+  node_id: string; display_name: string; category: string; endpoint: string
+  description: string; inputs: string[]; outputs: string[]; params: string[]
+  params_schema: Record<string, unknown>
+}[] = [
+  {
+    node_id: "csv_source",
+    display_name: "CSV Source",
+    category: "Sources",
+    endpoint: "/api/v1/graphs/execute/csv_source",
+    description: "Load a CSV file into a DataFrame.",
+    inputs: [],
+    outputs: ["df"],
+    params: [],
+    params_schema: {
+      properties: { file_path: { type: "string", title: "File Path", default: "" }, rows: { type: "integer", title: "Max Rows", default: 1000 } },
+      required: ["file_path"],
+    },
+  },
+  {
+    node_id: "filter",
+    display_name: "Filter",
+    category: "Transforms",
+    endpoint: "/api/v1/graphs/execute/filter",
+    description: "Filter rows by a column condition.",
+    inputs: ["df"],
+    outputs: ["df"],
+    params: [],
+    params_schema: {
+      properties: {
+        column: { type: "string", title: "Column" },
+        op: { type: "string", title: "Operator", enum: ["==", "!=", ">", "<", ">=", "<="] },
+        value: { type: "string", title: "Value" },
+      },
+      required: ["column", "op", "value"],
+    },
+  },
+  {
+    node_id: "preview",
+    display_name: "Preview",
+    category: "Utilities",
+    endpoint: "/api/v1/graphs/execute/preview",
+    description: "Preview first N rows of a DataFrame.",
+    inputs: ["df"],
+    outputs: [],
+    params: [],
+    params_schema: {
+      properties: { rows: { type: "integer", title: "Rows", default: 10 } },
+    },
+  },
+  {
+    node_id: "database_source",
+    display_name: "Database Source",
+    category: "Sources",
+    endpoint: "/api/v1/graphs/execute/database_source",
+    description: "Query a registered datasource.",
+    inputs: [],
+    outputs: ["dataframe"],
+    params: [],
+    params_schema: {
+      properties: {
+        datasource_key: { type: "string", title: "Datasource", default: "" },
+        filters_json: { type: "string", title: "Filters", default: "{}" },
+        limit: { type: "integer", title: "Limit", default: 50000 },
+      },
+    },
+  },
+  {
+    node_id: "join",
+    display_name: "Join",
+    category: "Transforms",
+    endpoint: "/api/v1/graphs/execute/join",
+    description: "Join two DataFrames.",
+    inputs: ["left", "right"],
+    outputs: ["dataframe"],
+    params: [],
+    params_schema: {
+      properties: {
+        on: { type: "array", items: { type: "string" }, title: "On" },
+        how: { type: "string", title: "How", enum: ["inner", "left", "right", "outer"], default: "inner" },
+      },
+      required: ["on"],
+    },
+  },
+  {
+    node_id: "select_columns",
+    display_name: "Select Columns",
+    category: "Transforms",
+    endpoint: "/api/v1/graphs/execute/select_columns",
+    description: "Keep specific columns.",
+    inputs: ["dataframe"],
+    outputs: ["dataframe"],
+    params: [],
+    params_schema: {
+      properties: {
+        columns: { type: "array", items: { type: "string" }, title: "Columns" },
+      },
+      required: ["columns"],
+    },
+  },
+  {
+    node_id: "drop_na",
+    display_name: "Drop NA",
+    category: "Transforms",
+    endpoint: "/api/v1/graphs/execute/drop_na",
+    description: "Remove rows with missing values.",
+    inputs: ["dataframe"],
+    outputs: ["dataframe"],
+    params: [],
+    params_schema: {
+      properties: {
+        columns: { type: "array", items: { type: "string" }, title: "Columns", default: [] },
+      },
+    },
+  },
+  {
+    node_id: "trainer",
+    display_name: "Trainer",
+    category: "Modeling",
+    endpoint: "/api/v1/graphs/execute/trainer",
+    description: "Train a machine learning model.",
+    inputs: ["dataframe"],
+    outputs: ["model", "metrics", "artifact_path", "feature_names"],
+    params: [],
+    params_schema: {
+      properties: {
+        model_type: { type: "string", title: "Model Type", enum: ["linear_regression", "random_forest", "gradient_boosting"], default: "random_forest" },
+        target_column: { type: "string", title: "Target Column", default: "crop_yield" },
+        feature_columns: { type: "array", items: { type: "string" }, title: "Feature Columns", default: [] },
+        test_size: { type: "number", title: "Test Size", default: 0.2 },
+        random_state: { type: "integer", title: "Random State", default: 42 },
+      },
+    },
+  },
+]
+
+export const GRAPH_VALIDATE_RESPONSE = { valid: true, node_count: 3, edge_count: 2, ordered_node_ids: ["n1", "n2", "n3"] }
+
+export const GRAPH_RUN_RESPONSE = { run_id: "test-run-001", status: "pending" }
+
+export const GRAPH_STATUS_RESPONSE = {
+  run_id: "test-run-001",
+  status: "done",
+  node_statuses: { n1: "done", n2: "done", n3: "cached" },
+}
+
+export const GRAPH_RESULT_RESPONSE = {
+  run_id: "test-run-001",
+  status: "done",
+  result: {
+    n3: {
+      preview: { rows: [{ col1: "a", col2: 1 }, { col1: "b", col2: 2 }], columns: ["col1", "col2"] },
+      dataframe: { __type__: "dataframe", shape: [2, 2], path: "/tmp/test.parquet" },
+    },
+  },
+  node_statuses: { n1: "done", n2: "done", n3: "done" },
+}
+
+export const DATASOURCE_KEYS_RESPONSE = ["yields", "weather", "soil", "daily_weather"]
+
+export const DATASOURCE_INFO_YIELDS = {
+  key: "yields",
+  columns: [
+    { name: "year", type_str: "int" },
+    { name: "state", type_str: "str" },
+    { name: "county", type_str: "str" },
+    { name: "crop", type_str: "str" },
+  ],
+  query_params: ["state", "county", "year", "crop"],
+}
+
+export const SAVED_WORKFLOWS_RESPONSE: { id: number; name: string; description: string | null; created_at: string; updated_at: string }[] = [
+  { id: 1, name: "My Workflow", description: null, created_at: "2026-01-01T00:00:00", updated_at: "2026-01-01T00:00:00" },
+]
+
+export const SAVED_WORKFLOW_DETAIL = {
+  id: 1,
+  name: "My Workflow",
+  description: null,
+  created_at: "2026-01-01T00:00:00",
+  updated_at: "2026-01-01T00:00:00",
+  graph_spec: JSON.stringify({
+    nodes: [
+      { id: "n1", type: "graphNode", position: { x: 0, y: 0 }, data: { nodeInfo: { node_id: "csv_source", display_name: "CSV Source", category: "Sources", endpoint: "", description: "", inputs: [], outputs: ["df"], params: [], params_schema: { properties: { file_path: { type: "string", title: "File Path", default: "" } } } }, params: { file_path: "/data/sample.csv" } } },
+    ],
+    edges: [],
+  }),
+}
+
 export const defaultHandlers = [
+  http.get("/api/v1/graphs/nodes", () =>
+    HttpResponse.json({ data: GRAPH_NODES_RESPONSE, count: GRAPH_NODES_RESPONSE.length })
+  ),
+  http.post("/api/v1/graphs/validate", () =>
+    HttpResponse.json(GRAPH_VALIDATE_RESPONSE)
+  ),
+  http.post("/api/v1/graphs/run", () =>
+    HttpResponse.json(GRAPH_RUN_RESPONSE)
+  ),
+  http.get("/api/v1/graphs/:runId/status", () =>
+    HttpResponse.json(GRAPH_STATUS_RESPONSE)
+  ),
+  http.get("/api/v1/graphs/:runId/result", () =>
+    HttpResponse.json(GRAPH_RESULT_RESPONSE)
+  ),
+  http.get("/api/v1/graphs/workflows", () =>
+    HttpResponse.json(SAVED_WORKFLOWS_RESPONSE)
+  ),
+  http.get("/api/v1/graphs/workflows/:id", () =>
+    HttpResponse.json(SAVED_WORKFLOW_DETAIL)
+  ),
+  http.post("/api/v1/graphs/workflows", () =>
+    HttpResponse.json({ ...SAVED_WORKFLOW_DETAIL, id: 2, name: "New Workflow" }, { status: 201 })
+  ),
+  http.put("/api/v1/graphs/workflows/:id", () =>
+    HttpResponse.json(SAVED_WORKFLOW_DETAIL)
+  ),
+  http.delete("/api/v1/graphs/workflows/:id", () =>
+    new HttpResponse(null, { status: 204 })
+  ),
+  http.get("/api/v1/graphs/datasource-keys", () =>
+    HttpResponse.json(DATASOURCE_KEYS_RESPONSE)
+  ),
+  http.get("/api/v1/graphs/datasource-info/:key", () =>
+    HttpResponse.json(DATASOURCE_INFO_YIELDS)
+  ),
+  http.post("/api/v1/graphs/upload", () =>
+    HttpResponse.json({ path: "/app/artifacts/uploads/test.csv", filename: "test.csv" })
+  ),
   http.get("/api/v1/utils/health-check/", () =>
     HttpResponse.json({ status: "ok" })
   ),

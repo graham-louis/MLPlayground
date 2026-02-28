@@ -3,6 +3,10 @@ from sqlmodel import Field, SQLModel
 from datetime import datetime as _datetime
 
 
+def _now() -> str:
+    return _datetime.utcnow().isoformat()
+
+
 # --- Model Run (persisted training artifact) ---
 
 class ModelRunBase(SQLModel):
@@ -38,3 +42,48 @@ class ModelRunsPublic(SQLModel):
 # Generic message
 class Message(SQLModel):
     message: str
+
+
+# ---------------------------------------------------------------------------
+# Graph Run — tracks execution of a submitted graph
+# ---------------------------------------------------------------------------
+
+class GraphRunBase(SQLModel):
+    run_id: str                             # UUID string
+    status: str = "pending"                 # pending / running / success / error
+    graph_spec: str                         # JSON of GraphSpec
+    result: Optional[str] = None            # JSON of serialized outputs; set on success
+    error: Optional[str] = None             # Error message; set on failure
+    node_statuses: Optional[str] = None     # JSON dict of per-node statuses
+    created_at: str = Field(default_factory=_now)
+    updated_at: str = Field(default_factory=_now)
+
+
+class GraphRun(GraphRunBase, table=True):
+    __tablename__ = "graph_runs"
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+
+class GraphRunPublic(GraphRunBase):
+    id: int
+
+
+# ---------------------------------------------------------------------------
+# Saved Workflow — user-named graph specs persisted in the database
+# ---------------------------------------------------------------------------
+
+class SavedWorkflowBase(SQLModel):
+    name: str
+    description: Optional[str] = None
+    graph_spec: str                         # JSON of {nodes: [...], edges: [...]}
+    created_at: str = Field(default_factory=_now)
+    updated_at: str = Field(default_factory=_now)
+
+
+class SavedWorkflow(SavedWorkflowBase, table=True):
+    __tablename__ = "saved_workflows"
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+
+class SavedWorkflowPublic(SavedWorkflowBase):
+    id: int

@@ -61,14 +61,23 @@ class BaseNode(ABC):
         # Imported inside the method to avoid a circular import at module load time.
         try:
             from app.nodes.registry import NODE_REGISTRY
+            # Extract the JSON schema from the Pydantic params model so the frontend
+            # can render a typed form for each node's configuration.
+            params_cls = getattr(cls, "params", None)
+            params_schema: dict = {}
+            if isinstance(params_cls, type) and issubclass(params_cls, BaseModel):
+                params_schema = params_cls.model_json_schema()
+
             NODE_REGISTRY.register(
                 node_id=cls.node_id,
                 display_name=getattr(cls, "display_name", cls.node_id),
+                category=getattr(cls, "category", "Unknown"),
                 endpoint=f"/api/v1/graphs/execute/{cls.node_id}",
                 description=getattr(cls, "description", ""),
                 inputs=[s.name for s in getattr(cls, "inputs", [])],
                 outputs=[s.name for s in getattr(cls, "outputs", [])],
                 params=[],
+                params_schema=params_schema,
                 run_fn=instance.run,
             )
             logger.debug("BaseNode: registered node_id=%r", cls.node_id)
