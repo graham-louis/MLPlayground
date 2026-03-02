@@ -50,29 +50,24 @@ _STATE_FIPS: dict[str, str] = {
 }
 
 
-def _call_cdo_api(
-    state: str,
-    start_year: int,
-    end_year: int,
+_CDO_MAX_YEARS = 10  # NOAA CDO API rejects date ranges longer than 10 years
+
+
+def _fetch_cdo_chunk(
+    location_id: str,
+    chunk_start: int,
+    chunk_end: int,
     variables: list[str],
-    token: str,
-) -> pd.DataFrame:
-    """Page through the CDO API and return a tidy DataFrame of annual summaries."""
+    headers: dict,
+) -> list[dict]:
+    """Page through CDO results for a single ≤10-year chunk."""
     import requests
 
-    location_id = _STATE_FIPS.get(state.upper())
-    if location_id is None:
-        raise ValueError(
-            f"NOAAGSOYDatasource: unknown state abbreviation '{state}'. "
-            f"Expected two-letter US postal code, e.g. 'NC'."
-        )
-
-    headers = {"token": token}
     base_params: dict[str, Any] = {
         "datasetid": "GSOY",
         "locationid": location_id,
-        "startdate": f"{start_year}-01-01",
-        "enddate": f"{end_year}-12-31",
+        "startdate": f"{chunk_start}-01-01",
+        "enddate": f"{chunk_end}-12-31",
         "datatypeid": ",".join(v.upper() for v in variables),
         "units": "standard",
         "limit": 1000,
@@ -98,6 +93,43 @@ def _call_cdo_api(
         if not page or offset + len(page) - 1 >= count:
             break
         offset += len(page)
+
+    return records
+
+
+def _call_cdo_api(
+    state: str,
+    start_year: int,
+    end_year: int,
+    variables: list[str],
+    token: str,
+) -> pd.DataFrame:
+    """Page through the CDO API and return a tidy DataFrame of annual summaries.
+
+    The NOAA CDO API rejects requests spanning more than 10 years, so long
+    ranges are automatically split into ≤10-year chunks.
+    """
+    location_id = _STATE_FIPS.get(state.upper())
+    if location_id is None:
+        raise ValueError(
+            f"NOAAGSOYDatasource: unknown state abbreviation '{state}'. "
+            f"Expected two-letter US postal code, e.g. 'NC'."
+        )
+
+    headers = {"token": token}
+
+    # Build list of (chunk_start, chunk_end) pairs each ≤ _CDO_MAX_YEARS wide
+    chunks: list[tuple[int, int]] = []
+    cs = start_year
+    while cs <= end_year:
+        ce = min(cs + _CDO_MAX_YEARS - 1, end_year)
+        chunks.append((cs, ce))
+        cs = ce + 1
+
+    records: list[dict] = []
+    for cs, ce in chunks:
+        logger.debug("NOAAGSOYDatasource: fetching chunk %d–%d", cs, ce)
+        records.extend(_fetch_cdo_chunk(location_id, cs, ce, variables, headers))
 
     if not records:
         logger.warning(

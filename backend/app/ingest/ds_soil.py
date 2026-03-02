@@ -28,23 +28,17 @@ class SoilDatasource(BaseDatasource):
         Column("clay_pct",       float),
     ]
 
-    # Soil is time-invariant: expose only the states scope parameter.
+    # Soil is time-invariant: no year range needed.
     scope_params = [
-        {
-            "name": "states",
-            "type": "string_list",
-            "label": "States",
-            "placeholder": "e.g. North Carolina, Iowa",
-            "default": ["North Carolina"],
-        },
+        {"name": "county", "type": "string", "label": "County", "placeholder": "e.g. Wake",            "default": ""},
+        {"name": "state",  "type": "string", "label": "State",  "placeholder": "e.g. North Carolina", "default": "North Carolina"},
     ]
 
     def fetch(
         self,
         county: str,
         state: str,
-        start_year: int,  # unused — soil data is not time-series
-        end_year: int,    # unused
+        **kwargs,  # absorbs start_year/end_year if passed by the ingest runner
     ) -> Optional[pd.DataFrame]:
         from app.ingest._daymet_helpers import fetch_ssurgo_soil
 

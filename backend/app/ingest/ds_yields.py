@@ -31,22 +31,57 @@ class YieldsDatasource(BaseDatasource):
         Column("county_ansi",  str),
     ]
 
+    scope_params = [
+        {
+            "name": "state",
+            "type": "string",
+            "label": "State Name",
+            "description": "Full US state name or abbreviation, e.g. 'NORTH CAROLINA' or 'NC'.",
+            "default": "NORTH CAROLINA",
+        },
+        {
+            "name": "county",
+            "type": "string",
+            "label": "County (optional)",
+            "description": "County name, e.g. 'WAKE'. Leave empty to fetch all counties.",
+            "default": "",
+        },
+        {
+            "name": "start_year",
+            "type": "integer",
+            "label": "Start Year",
+            "default": 1990,
+        },
+        {
+            "name": "end_year",
+            "type": "integer",
+            "label": "End Year",
+            "default": 2024,
+        },
+    ]
+
     def fetch(
         self,
-        county: str,
-        state: str,
-        start_year: int,
-        end_year: int,
+        county: str = "",
+        state: str = "NORTH CAROLINA",
+        start_year: int = 1990,
+        end_year: int = 2024,
     ) -> Optional[pd.DataFrame]:
         from app.core.config import settings
 
         api_key = settings.NASS_API_KEY
         if not api_key or api_key == "YOUR_API_KEY":
-            logger.error("NASS_API_KEY not set — cannot fetch yield data.")
-            return None
+            raise RuntimeError(
+                "YieldsDatasource: NASS_API_KEY is not configured. "
+                "Set it in your .env file or environment and restart."
+            )
 
-        logger.info("Fetching NASS yields for %s, %s (%d–%d)…", county, state, start_year, end_year)
-        params = {
+        county = (county or "").strip()
+        logger.info(
+            "Fetching NASS yields for county=%r state=%s (%d–%d)…",
+            county or "<all>", state, start_year, end_year,
+        )
+        params: dict = {
             "key": api_key,
             "source_desc": "SURVEY",
             "sector_desc": "CROPS",
@@ -55,11 +90,13 @@ class YieldsDatasource(BaseDatasource):
             "unit_desc": "BU / ACRE",
             "agg_level_desc": "COUNTY",
             "state_name": state.upper(),
-            "county_name": county.upper(),
             "year__LE": end_year,
             "year__GE": start_year,
             "format": "JSON",
         }
+        # Only filter by county when one is specified — omitting it returns all counties
+        if county:
+            params["county_name"] = county.upper()
         try:
             response = requests.get(
                 "https://quickstats.nass.usda.gov/api/api_GET/",
@@ -84,7 +121,7 @@ class YieldsDatasource(BaseDatasource):
         result = pd.DataFrame({
             "year": df["year"].astype(int),
             "state": state,
-            "county": county,
+            "county": df.get("county_name", pd.Series([county] * len(df))).str.title(),
             "crop": df.get("commodity_desc", pd.Series([""] * len(df))),
             "value": df["value"],
             "unit": df.get("unit_desc", pd.Series([None] * len(df))),

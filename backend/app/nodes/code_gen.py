@@ -444,6 +444,156 @@ def _gen_python_code(p: dict, inp: dict, ov: str) -> tuple[set, list]:
     return set(), lines
 
 
+def _gen_predictor(p: dict, inp: dict, ov: str) -> tuple[set, list]:
+    model_in = inp.get("model", "None")
+    df_in = inp.get("dataframe", "None")
+    feature_names_in = inp.get("feature_names", "None")
+    target = p.get("target_column", "")
+    feat_cols = p.get("feature_columns", [])
+    id_cols = p.get("id_columns", [])
+    out_col = p.get("output_column_name", "predicted_yield")
+    out = _ivar(ov, "predictions")
+
+    if feat_cols:
+        feat_expr = _r(feat_cols)
+    elif feature_names_in and feature_names_in != "None":
+        feat_expr = str(feature_names_in)
+    else:
+        feat_expr = (
+            f"[c for c in {df_in}.select_dtypes(include='number').columns"
+            + (f" if c != {_r(target)}" if target else "")
+            + "]"
+        )
+
+    lines = [
+        f"import numpy as _np_pred",
+        f"_pred_feat = {feat_expr}",
+        f"_pred_df = {df_in}.dropna(subset=_pred_feat).reset_index(drop=True)",
+        f"_pred_X = _pred_df[_pred_feat].values",
+        f"_pred_y = {model_in}.predict(_pred_X)",
+        f"_pred_out = {{}}",
+    ]
+
+    for col in id_cols:
+        lines.append(f"if {_r(col)} in _pred_df.columns: _pred_out[{_r(col)}] = _pred_df[{_r(col)}].values")
+
+    lines.append(f"_pred_out[{_r(out_col)}] = _pred_y")
+
+    if target:
+        lines += [
+            f"if {_r(target)} in _pred_df.columns:",
+            f"    _pred_true = _pred_df[{_r(target)}].values",
+            f"    _pred_out['actual'] = _pred_true",
+            f"    _pred_out['residual'] = _pred_true - _pred_y",
+            f"    _pred_out['pct_error'] = _np_pred.where(_pred_true != 0, _np_pred.abs((_pred_true - _pred_y) / _pred_true) * 100, _np_pred.nan)",
+        ]
+
+    lines += [
+        f"import pandas as _pd_pred",
+        f"{out} = _pd_pred.DataFrame(_pred_out)",
+        f"print(f'PredictorNode: {len({out})} rows predicted')",
+    ]
+    return set(), lines
+
+
+def _gen_sarimax(p: dict, inp: dict, ov: str) -> tuple[set, list]:
+    """Standalone SARIMAX forecast — statsmodels AIC grid search + prediction intervals."""
+    year_col   = p.get("year_column", "year")
+    target_col = p.get("target_column", "value")
+    exog_cols  = p.get("exog_columns", [])
+    max_p      = int(p.get("max_p", 3))
+    max_d      = int(p.get("max_d", 2))
+    max_q      = int(p.get("max_q", 3))
+    seasonal   = bool(p.get("seasonal", False))
+    s_period   = int(p.get("seasonal_period", 12))
+    fc_steps   = int(p.get("forecast_steps", 0))
+    conf_levels = p.get("confidence_levels", [80, 95])
+    title      = p.get("title", "")
+
+    df_in = inp.get("dataframe", "df")
+    out_fc    = _ivar(ov, "forecast")
+    out_fig   = _ivar(ov, "figure")
+    out_summ  = _ivar(ov, "model_summary")
+
+    imps = {
+        "import itertools",
+        "import base64",
+        "import io",
+        "import numpy as np",
+        "import pandas as pd",
+        "import matplotlib; matplotlib.use('Agg')",
+        "import matplotlib.pyplot as plt",
+        "from statsmodels.tsa.statespace.sarimax import SARIMAX",
+    }
+
+    lines = [
+        f"# ── SARIMAX Forecast ─────────────────────────────────────────────────",
+        f"_sx_df = {df_in}.copy().sort_values({_r(year_col)}).reset_index(drop=True)",
+        f"_sx_train = _sx_df[~_sx_df[{_r(target_col)}].isna()].copy()",
+        f"_sx_future = _sx_df[_sx_df[{_r(target_col)}].isna()].copy()",
+        f"_sx_steps = {fc_steps} if {fc_steps} > 0 else max(len(_sx_future), 3)",
+        f"_sx_y = _sx_train[{_r(target_col)}].values.astype(float)",
+        f"_sx_exog_cols = {_r(exog_cols)}",
+        f"_sx_exog_train = _sx_train[_sx_exog_cols] if _sx_exog_cols else None",
+        f"_sx_exog_future = _sx_future[_sx_exog_cols].iloc[:_sx_steps].values if _sx_exog_cols and len(_sx_future) >= _sx_steps else None",
+        f"_sx_orders = list(itertools.product(range({max_p}+1), range({max_d}+1), range({max_q}+1)))",
+        f"_sx_seasonal = {_r((1, 1, 1, s_period) if seasonal else (0, 0, 0, 0))}",
+        f"_sx_best_aic = float('inf')",
+        f"_sx_best_res = None",
+        f"_sx_best_ord = None",
+        f"for _sx_ord in _sx_orders:",
+        f"    try:",
+        f"        _sx_mod = SARIMAX(_sx_y, exog=_sx_exog_train, order=_sx_ord, seasonal_order=_sx_seasonal, trend='c', enforce_stationarity=False, enforce_invertibility=False)",
+        f"        _sx_res = _sx_mod.fit(disp=False, maxiter=200)",
+        f"        if _sx_res.aic < _sx_best_aic:",
+        f"            _sx_best_aic = _sx_res.aic",
+        f"            _sx_best_res = _sx_res",
+        f"            _sx_best_ord = _sx_ord",
+        f"    except Exception:",
+        f"        pass",
+        f"assert _sx_best_res is not None, 'SARIMAX: all orders failed'",
+        f"_sx_fc = _sx_best_res.get_forecast(steps=_sx_steps, exog=_sx_exog_future)",
+        f"_sx_mean = _sx_fc.predicted_mean",
+        f"_sx_last_yr = int(_sx_train[{_r(year_col)}].iloc[-1])",
+        f"_sx_fc_yrs = _sx_future[{_r(year_col)}].iloc[:_sx_steps].values if len(_sx_future) >= _sx_steps else np.arange(_sx_last_yr+1, _sx_last_yr+1+_sx_steps)",
+        f"_sx_rec = {{'{year_col}': _sx_fc_yrs, 'mean': _sx_mean.values}}",
+    ]
+    for lvl in conf_levels:
+        alpha = 1.0 - lvl / 100.0
+        lines += [
+            f"_sx_ci_{lvl} = _sx_fc.conf_int(alpha={alpha})",
+            f"_sx_rec['lo_{lvl}'] = _sx_ci_{lvl}.iloc[:, 0].values",
+            f"_sx_rec['hi_{lvl}'] = _sx_ci_{lvl}.iloc[:, 1].values",
+        ]
+    lines += [
+        f"{out_fc} = pd.DataFrame(_sx_rec)",
+        f"# ── Figure ──────────────────────────────────────────────────────────",
+        f"_sx_fig, _sx_ax = plt.subplots(figsize=(10, 5))",
+        f"_sx_ax.plot(_sx_train[{_r(year_col)}].values, _sx_y, 'o-', color='#1f77b4', label='Observed', linewidth=2)",
+        f"_sx_ax.plot(_sx_fc_yrs, _sx_mean.values, 's--', color='#ff7f0e', label='Forecast', linewidth=2)",
+    ]
+    band_colors = ["'#ff7f0e'", "'#ffbb78'"]
+    for i, lvl in enumerate(sorted(conf_levels, reverse=True)):
+        color = band_colors[i % len(band_colors)]
+        lines.append(f"_sx_ax.fill_between(_sx_fc_yrs, _sx_rec['lo_{lvl}'], _sx_rec['hi_{lvl}'], alpha=0.25, color={color}, label='{lvl}% CI')")
+    lines += [
+        f"_sx_ax.set_title({_r(title or 'SARIMAX Forecast')}, fontsize=13)",
+        f"_sx_ax.set_xlabel({_r(year_col.capitalize())})",
+        f"_sx_ax.set_ylabel({_r(target_col)})",
+        f"_sx_ax.legend(loc='upper left', fontsize=9)",
+        f"_sx_ax.grid(True, linestyle='--', alpha=0.4)",
+        f"_sx_fig.tight_layout()",
+        f"_sx_buf = io.BytesIO()",
+        f"_sx_fig.savefig(_sx_buf, format='png', dpi=120)",
+        f"plt.close(_sx_fig)",
+        f"_sx_buf.seek(0)",
+        f"{out_fig} = {{'__type__': 'figure', 'data': base64.b64encode(_sx_buf.read()).decode('utf-8'), 'format': 'png'}}",
+        f"{out_summ} = {{'order': list(_sx_best_ord), 'aic': round(float(_sx_best_aic), 4), 'n_train': int(len(_sx_train)), 'n_forecast': int(_sx_steps)}}",
+        f"print(f'SARIMAXForecastNode: order={{_sx_best_ord}} AIC={{_sx_best_aic:.2f}} n_train={{len(_sx_train)}} n_forecast={{_sx_steps}}')",
+    ]
+    return imps, lines
+
+
 # ---------------------------------------------------------------------------
 # Dispatch table
 # ---------------------------------------------------------------------------
@@ -463,6 +613,8 @@ _GENERATORS: dict[str, Any] = {
     "drop_na": _gen_drop_na,
     "drop_columns": _gen_drop_columns,
     "trainer": _gen_trainer,
+    "predictor": _gen_predictor,
+    "sarimax_forecaster": _gen_sarimax,
     "plot": _gen_plot,
     "metrics": _gen_metrics,
     "python_code": _gen_python_code,

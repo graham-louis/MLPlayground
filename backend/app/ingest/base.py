@@ -81,17 +81,15 @@ class BaseDatasource(ABC):
     label: str = ""
     description: str = ""
     columns: list[Column] = []
-    scope_params: list[dict] = [
-        {
-            "name": "states",
-            "type": "string_list",
-            "label": "States",
-            "placeholder": "e.g. North Carolina, Iowa",
-            "default": ["North Carolina"],
-        },
-        {"name": "start_year", "type": "integer", "label": "Start Year", "default": 1980},
-        {"name": "end_year",   "type": "integer", "label": "End Year",   "default": 2022},
-    ]
+    # Subclasses should define scope_params whose "name" keys match the
+    # kwargs accepted by their fetch() method exactly.  Example:
+    #   scope_params = [
+    #       {"name": "county",     "type": "string",  "label": "County",     "default": ""},
+    #       {"name": "state",      "type": "string",  "label": "State",      "default": "North Carolina"},
+    #       {"name": "start_year", "type": "integer", "label": "Start Year", "default": 1980},
+    #       {"name": "end_year",   "type": "integer", "label": "End Year",   "default": 2022},
+    #   ]
+    scope_params: list[dict] = []
 
     # Class-level map: key → instance (populated by __init_subclass__)
     _instances: dict[str, "BaseDatasource"] = {}
@@ -127,15 +125,15 @@ class BaseDatasource(ABC):
     # ------------------------------------------------------------------
 
     @abstractmethod
-    def fetch(
-        self,
-        county: str,
-        state: str,
-        start_year: int,
-        end_year: int,
-    ) -> Optional[pd.DataFrame]:
+    def fetch(self, **kwargs) -> Optional[pd.DataFrame]:
         """
-        Fetch data for a single county/state over a year range.
+        Fetch data for this datasource.
+
+        The accepted kwargs must correspond to this datasource's ``scope_params``
+        names.  Common conventions:
+          - County-level sources:   fetch(county, state, start_year, end_year)
+          - State-level sources:    fetch(state, start_year, end_year)
+          - Time-invariant sources: fetch(county, state)
 
         Return a DataFrame whose columns match ``self.columns``.
         Return ``None`` or an empty DataFrame if no data is available.

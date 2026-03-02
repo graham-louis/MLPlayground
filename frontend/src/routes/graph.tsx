@@ -196,7 +196,7 @@ function GraphNodeComponent({ id, data, selected }: NodeProps<GraphFlowNode>) {
   return (
     <>
       <NodeResizer
-        minWidth={160}
+        minWidth={180}
         minHeight={70}
         isVisible={!!selected}
         lineStyle={{ borderColor: "#63b3ed", borderWidth: 1 }}
@@ -209,7 +209,7 @@ function GraphNodeComponent({ id, data, selected }: NodeProps<GraphFlowNode>) {
         boxShadow={selected ? "0 0 0 3px rgba(99,179,237,0.4)" : "sm"}
         w="100%"
         h="100%"
-        minW="160px"
+        minW="180px"
         overflow="hidden"
         fontSize="sm"
         position="relative"
@@ -1632,9 +1632,9 @@ function layoutNodes(
   const g = new dagre.graphlib.Graph()
   g.setDefaultEdgeLabel(() => ({}))
   const isLR = direction === "LR"
-  g.setGraph({ rankdir: direction, ranksep: isLR ? 80 : 60, nodesep: isLR ? 30 : 20 })
+  g.setGraph({ rankdir: direction, ranksep: isLR ? 40 : 30, nodesep: isLR ? 15 : 10 })
   for (const n of nodes) {
-    g.setNode(n.id, { width: n.width ?? 200, height: n.height ?? 80 })
+    g.setNode(n.id, { width: n.width ?? 180, height: n.height ?? 100 })
   }
   for (const e of edges) {
     g.setEdge(e.source, e.target)
@@ -1645,7 +1645,7 @@ function layoutNodes(
     return {
       ...n,
       position: {
-        x: pos.x - (n.width ?? 200) / 2,
+        x: pos.x - (n.width ?? 180) / 2,
         y: pos.y - (n.height ?? 80) / 2,
       },
     }
@@ -1993,7 +1993,7 @@ function GraphPage() {
   function loadTemplate(name: string) {
     const tpl = TEMPLATES[name]
     if (!tpl) return
-    setNodes(tpl.nodes)
+    setNodes(tpl.nodes.map((n) => ({ ...n, width: n.width ?? 180, height: n.height ?? 100 })))
     setEdges(tpl.edges)
     setSelectedNodeId(null)
     setRunId(null)

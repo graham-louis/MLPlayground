@@ -240,3 +240,108 @@ class DropNaNode(BaseNode):
         df: pd.DataFrame = inputs["dataframe"]
         subset = params.columns or None
         return {"dataframe": df.dropna(subset=subset).reset_index(drop=True)}
+
+
+class OutlierFilterNode(BaseNode):
+    node_id = "outlier_filter"
+    display_name = "Outlier Filter"
+    description = (
+        "Detect and handle outliers in numeric columns using IQR fences or "
+        "z-score thresholds. Actions: clip (winsorize), remove (drop rows), "
+        "or mask (replace with NaN for downstream interpolation)."
+    )
+    category = "Transforms"
+
+    inputs = [IOSlot(name="dataframe", type=IOTypes.DATAFRAME)]
+    outputs = [IOSlot(name="dataframe", type=IOTypes.DATAFRAME)]
+
+    class Params(BaseModel):
+        columns: list[str] = []  # empty = all numeric columns
+        method: Literal["iqr", "zscore"] = "iqr"
+        threshold: float = 1.5  # IQR fence multiplier, or σ cutoff for zscore
+        action: Literal["clip", "remove", "mask"] = "clip"
+
+    params = Params
+
+    def run(self, inputs: dict[str, Any], params: Params) -> dict[str, Any]:
+        import numpy as np
+
+        df = inputs["dataframe"].copy()
+        cols = params.columns or list(df.select_dtypes(include="number").columns)
+
+        if params.method == "iqr":
+            bounds: dict[str, tuple[float, float]] = {}
+            for col in cols:
+                if col not in df.columns:
+                    continue
+                q1 = df[col].quantile(0.25)
+                q3 = df[col].quantile(0.75)
+                iqr = q3 - q1
+                lo = q1 - params.threshold * iqr
+                hi = q3 + params.threshold * iqr
+                bounds[col] = (lo, hi)
+        else:  # zscore
+            bounds = {}
+            for col in cols:
+                if col not in df.columns:
+                    continue
+                mean = df[col].mean()
+                std = df[col].std()
+                if std == 0:
+                    continue
+                bounds[col] = (mean - params.threshold * std, mean + params.threshold * std)
+
+        if params.action == "clip":
+            for col, (lo, hi) in bounds.items():
+                df[col] = df[col].clip(lower=lo, upper=hi)
+        elif params.action == "mask":
+            for col, (lo, hi) in bounds.items():
+                mask = (df[col] < lo) | (df[col] > hi)
+                df.loc[mask, col] = np.nan
+        else:  # remove
+            outlier_mask = pd.Series(False, index=df.index)
+            for col, (lo, hi) in bounds.items():
+                outlier_mask |= (df[col] < lo) | (df[col] > hi)
+            df = df[~outlier_mask].reset_index(drop=True)
+
+        return {"dataframe": df}
+
+
+class InterpolateNode(BaseNode):
+    node_id = "interpolate"
+    display_name = "Interpolate"
+    description = (
+        "Fill missing values in numeric columns using time-series-aware "
+        "interpolation (linear, quadratic, cubic) or forward/backward fill. "
+        "The DataFrame must be sorted by its time index before this node."
+    )
+    category = "Transforms"
+
+    inputs = [IOSlot(name="dataframe", type=IOTypes.DATAFRAME)]
+    outputs = [IOSlot(name="dataframe", type=IOTypes.DATAFRAME)]
+
+    class Params(BaseModel):
+        columns: list[str] = []  # empty = all numeric columns
+        method: Literal["linear", "ffill", "bfill", "quadratic", "cubic"] = "linear"
+        fill_edges: bool = True  # ffill then bfill after interpolation to cover leading/trailing NaN
+
+    params = Params
+
+    def run(self, inputs: dict[str, Any], params: Params) -> dict[str, Any]:
+        df = inputs["dataframe"].copy()
+        cols = params.columns or list(df.select_dtypes(include="number").columns)
+
+        if params.method in ("ffill", "bfill"):
+            for col in cols:
+                if col not in df.columns:
+                    continue
+                df[col] = df[col].ffill() if params.method == "ffill" else df[col].bfill()
+        else:
+            for col in cols:
+                if col not in df.columns:
+                    continue
+                df[col] = df[col].interpolate(method=params.method, limit_direction="both")
+                if params.fill_edges:
+                    df[col] = df[col].ffill().bfill()
+
+        return {"dataframe": df}

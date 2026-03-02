@@ -30,6 +30,13 @@ class WeatherDatasource(BaseDatasource):
         Column("srad",          float),
     ]
 
+    scope_params = [
+        {"name": "county",     "type": "string",  "label": "County",     "placeholder": "e.g. Wake",             "default": ""},
+        {"name": "state",      "type": "string",  "label": "State",      "placeholder": "e.g. North Carolina",  "default": "North Carolina"},
+        {"name": "start_year", "type": "integer", "label": "Start Year", "default": 1980},
+        {"name": "end_year",   "type": "integer", "label": "End Year",   "default": 2022},
+    ]
+
     def fetch(
         self,
         county: str,

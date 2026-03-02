@@ -254,3 +254,113 @@ class SaveModelNode(BaseNode):
         path = os.path.join(ARTIFACTS_DIR, f"{params.name}.pkl")
         joblib.dump({"model": model, "features": feature_names}, path)
         return {"artifact_path": path}
+
+
+class PredictorNode(BaseNode):
+    """Apply a trained model to a DataFrame and return predictions.
+
+    Integrates tightly with ``TrainerNode``: wire the ``model`` and
+    ``feature_names`` outputs from a trainer directly to the matching inputs
+    here.  The node supports:
+
+    * **Residual analysis** — when ``target_column`` is non-empty and the
+      column exists in the input DataFrame, the output includes ``actual``,
+      ``predicted``, ``residual``, and ``pct_error`` columns alongside any
+      ``id_columns`` you request (e.g. ``year``, ``county``).
+    * **Pure inference** — when ``target_column`` is blank or absent the output
+      only contains ``predicted`` (renamed via ``output_column_name``) plus
+      any requested ``id_columns``.
+    """
+
+    node_id = "predictor"
+    display_name = "Predictor"
+    description = (
+        "Apply a trained model to a DataFrame.  Wire the model and "
+        "feature_names outputs from a Trainer node.  When a target column is "
+        "provided the output also includes residuals for diagnostic plots."
+    )
+    category = "Modeling"
+
+    inputs = [
+        IOSlot(name="model", type=IOTypes.MODEL),
+        IOSlot(name="dataframe", type=IOTypes.DATAFRAME),
+        IOSlot(name="feature_names", type=IOTypes.ARTIFACT),
+    ]
+    outputs = [
+        IOSlot(name="predictions", type=IOTypes.DATAFRAME),
+    ]
+
+    class Params(BaseModel):
+        target_column: str = ""
+        """If set and column exists in the DataFrame, residuals are computed."""
+        feature_columns: list[str] = []
+        """Override inferred feature list.  Useful when feature_names is not wired."""
+        id_columns: list[str] = []
+        """Pass-through columns included in the output (e.g. year, county)."""
+        output_column_name: str = "predicted_yield"
+        """Name of the predicted-value column in the output DataFrame."""
+
+    params = Params
+
+    def run(self, inputs: dict[str, Any], params: Params) -> dict[str, Any]:
+        import pandas as pd
+
+        model = inputs["model"]
+        df: pd.DataFrame = inputs["dataframe"]
+
+        # ── Resolve feature columns ──────────────────────────────────────────
+        # Priority: explicit params > wired feature_names > all numeric columns
+        feature_cols: list[str] = (
+            params.feature_columns
+            or inputs.get("feature_names") or []
+        )
+        if not feature_cols:
+            exclude = set()
+            if params.target_column:
+                exclude.add(params.target_column)
+            if params.id_columns:
+                exclude.update(params.id_columns)
+            feature_cols = [
+                c for c in df.select_dtypes(include="number").columns
+                if c not in exclude
+            ]
+
+        # Validate
+        missing = [c for c in feature_cols if c not in df.columns]
+        if missing:
+            raise ValueError(
+                f"PredictorNode: feature columns not found in DataFrame: {missing}. "
+                f"Available: {list(df.columns)}"
+            )
+
+        # Drop rows where features are null
+        df_clean = df.dropna(subset=feature_cols).reset_index(drop=True)
+        X = df_clean[feature_cols].values
+        y_pred = model.predict(X)
+
+        # ── Assemble output ──────────────────────────────────────────────────
+        out_cols: dict[str, Any] = {}
+
+        # Include requested id/passthrough columns
+        for col in params.id_columns:
+            if col in df_clean.columns:
+                out_cols[col] = df_clean[col].values
+
+        out_cols[params.output_column_name] = y_pred
+
+        has_target = (
+            params.target_column
+            and params.target_column in df_clean.columns
+        )
+        if has_target:
+            y_true = df_clean[params.target_column].values
+            residuals = y_true - y_pred
+            pct_err = np.where(
+                y_true != 0, np.abs(residuals / y_true) * 100.0, np.nan
+            )
+            out_cols["actual"] = y_true
+            out_cols["residual"] = residuals
+            out_cols["pct_error"] = pct_err
+
+        predictions_df = pd.DataFrame(out_cols)
+        return {"predictions": predictions_df}

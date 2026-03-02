@@ -49,15 +49,16 @@ class MyDataSource(BaseDatasource):       # TODO: rename this class
 
     # ------------------------------------------------------------------
     # TODO 3 (optional) — Ingest scope parameters
-    # These drive the Ingest form in the UI.  Remove or adjust as needed.
+    # The "name" of each entry must match a kwarg accepted by fetch() below.
+    # The ingest runner uses inspect.signature() to route calls automatically:
+    #   - if fetch() accepts "county"  → iterates counties per state
+    #   - if fetch() accepts "state"   → iterates states
+    #   - otherwise                    → single call with whatever scope provides
+    # Remove or adjust entries to match your fetch() signature.
     # ------------------------------------------------------------------
     scope_params = [
-        {
-            "name": "states",
-            "type": "string_list",
-            "label": "States",
-            "default": ["North Carolina"],
-        },
+        {"name": "county",     "type": "string",  "label": "County",     "default": ""},
+        {"name": "state",      "type": "string",  "label": "State",      "default": "North Carolina"},
         {"name": "start_year", "type": "integer", "label": "Start Year", "default": 1980},
         {"name": "end_year",   "type": "integer", "label": "End Year",   "default": 2022},
     ]
