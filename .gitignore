@@ -108,3 +108,5 @@ SCALABILITY_SKELETON.md
 SCALABILITY_OPTIONS.md
 
 artifacts/
+backend/catboost_info/
+
