@@ -2,9 +2,8 @@
 
 **An extensible, researcher-friendly platform for tabular machine learning.**
 
-MLPlayground is a digital data warehouse and modelling hub for tabular datasets. It ships with a working agriculture example domain (US crop yields, weather, soil) but is **fully domain-agnostic** — any tabular dataset can be plugged in by creating a single file. Adding a new data source or ML model does not require touching the frontend.
+MLPlayground is a digital data warehouse and modelling hub for tabular datasets. It ships with a working agriculture example domain (US crop yields, weather, soil) but is domain-agnostic — any tabular dataset can be plugged in by creating a single file.
 
-Built on the [tiangolo full-stack FastAPI template](https://github.com/tiangolo/full-stack-fastapi-template).
 
 ---
 
@@ -87,7 +86,7 @@ The bundled agriculture example ingests from three public sources:
 | `INGEST_STATES` | Preset list | Comma-separated US states to ingest |
 | `INGEST_START_YEAR` | `1980` | First year to ingest |
 | `INGEST_END_YEAR` | `2022` | Last year to ingest |
-| `ARTIFACTS_DIR` | `artifacts/` | Where trained model `.pkl` files are saved |
+| `ARTIFACTS_BASE` | `artifacts/` | Where trained model `.pkl` files and explainability outputs are saved (env var used by backend) |
 
 ---
 
@@ -141,6 +140,13 @@ MLPlayground/
 ```
 
 ---
+
+## Plugin systems
+
+Two plugin types are auto-discovered at backend startup:
+
+- Datasources: add a single file named `ds_<name>.py` under `backend/app/ingest/` that subclasses `BaseDatasource` (see `backend/app/ingest/template_datasource.py`). The framework creates backing tables on first use and registers the source for the UI automatically.
+- Nodes: add a file named `node_<name>.py` under `backend/app/nodes/` that subclasses `BaseNode`. Node Pydantic schemas are used to render parameter forms in the graph UI.
 
 ## API Reference
 
