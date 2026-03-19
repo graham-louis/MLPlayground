@@ -60,3 +60,5 @@ Custom code execution must be server-guarded; teach security-first approach (no 
         - Look at Grafana for professional dashboards
         - Maybe use uPlot with Grafana/ui
 - Make nodes that have text input or filters be case insensitive
+- Clearly label input and output slots on nodes
+- Add better run status checking (which node is executing)

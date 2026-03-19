@@ -12,6 +12,7 @@ import { noaaWeatherPlotTemplate } from "./noaaWeatherPlot"
 import { pythonCodeTransformTemplate } from "./pythonCodeTransform"
 import { ncCornYieldTemplate } from "./ncCornYield"
 import { sarimaxyieldForecastTemplate } from "./sarimaxyieldForecast"
+import { lstmSoilMoistureTemplate } from "./lstmSoilMoisture"
 
 export const TEMPLATES: Record<string, GraphTemplate> = {
   "CSV → Filter": csvFilterTemplate,
@@ -20,6 +21,7 @@ export const TEMPLATES: Record<string, GraphTemplate> = {
   "NC Corn Yield Forecast (SARIMAX + NOAA)": sarimaxyieldForecastTemplate,
   "NOAA Weather → Plot": noaaWeatherPlotTemplate,
   "Python Code Transform": pythonCodeTransformTemplate,
+  "LSTM Soil Moisture Forecast": lstmSoilMoistureTemplate,
 }
 
 export type { GraphTemplate }

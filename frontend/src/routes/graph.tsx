@@ -251,16 +251,92 @@ function GraphNodeComponent({ id, data, selected }: NodeProps<GraphFlowNode>) {
           </Text>
         )}
       </Box>
-      <Box px={3} py={2}>
-        <Text fontSize="xs" color="gray.500">{nodeInfo.category}</Text>
-        {Object.entries(data.params as Record<string, unknown>).slice(0, 3).map(([k, v]) => (
-          <Tooltip key={k} label={`${k}: ${String(v)}`} placement="right" hasArrow openDelay={400}>
-            <Text fontSize="xs" noOfLines={1} color="gray.700">
-              <b>{k}:</b> {String(v)}
+
+      {/* Body: 3-column layout — input labels | params | output labels */}
+      <Flex py={2} minH="60px" align="flex-start">
+        {/* Input slot labels — same 22px row height as handle spacing */}
+        <Box w="68px" flexShrink={0} pl="20px" overflow="hidden">
+          {nodeInfo.inputs.map((slot) => (
+            <Text
+              key={`inlabel-${slot}`}
+              fontSize="9px"
+              color="gray.400"
+              h="22px"
+              lineHeight="22px"
+              overflow="hidden"
+              whiteSpace="nowrap"
+              style={{ textOverflow: "ellipsis" }}
+              pointerEvents="none"
+            >
+              {slot}
             </Text>
-          </Tooltip>
-        ))}
-      </Box>
+          ))}
+        </Box>
+
+        {/* Center: category + params */}
+        <Box flex={1} overflow="hidden" px={1}>
+          <Text fontSize="9px" color="gray.400" fontWeight="semibold" mb="2px" textTransform="uppercase" letterSpacing="wide">
+            {nodeInfo.category}
+          </Text>
+          {(() => {
+            const entries = Object.entries(data.params as Record<string, unknown>)
+            const shown = entries.slice(0, 4)
+            const extra = entries.length - shown.length
+            return (
+              <>
+                {shown.map(([k, v]) => {
+                  const isArray = Array.isArray(v)
+                  const isBool = typeof v === "boolean"
+                  const displayVal = isArray
+                    ? `${(v as unknown[]).length} items`
+                    : isBool
+                      ? (v ? "✓" : "✗")
+                      : String(v ?? "").slice(0, 16) + (String(v ?? "").length > 16 ? "…" : "")
+                  return (
+                    <Tooltip key={k} label={`${k}: ${String(v)}`} placement="right" hasArrow openDelay={400}>
+                      <Flex align="center" gap={1} mb="1px">
+                        <Text fontSize="9px" color="gray.400" noOfLines={1} flexShrink={0} maxW="52px">{k}</Text>
+                        <Text
+                          fontSize="9px"
+                          color={isBool ? (v ? "green.500" : "red.400") : isArray ? "blue.400" : "gray.700"}
+                          noOfLines={1}
+                          flex={1}
+                          fontWeight={isArray || isBool ? "semibold" : "normal"}
+                        >
+                          {displayVal}
+                        </Text>
+                      </Flex>
+                    </Tooltip>
+                  )
+                })}
+                {extra > 0 && (
+                  <Text fontSize="9px" color="gray.400">+{extra} more</Text>
+                )}
+              </>
+            )
+          })()}
+        </Box>
+
+        {/* Output slot labels */}
+        <Box w="68px" flexShrink={0} pr="20px" overflow="hidden">
+          {nodeInfo.outputs.map((slot) => (
+            <Text
+              key={`outlabel-${slot}`}
+              fontSize="9px"
+              color="gray.400"
+              h="22px"
+              lineHeight="22px"
+              overflow="hidden"
+              whiteSpace="nowrap"
+              textAlign="right"
+              style={{ textOverflow: "ellipsis" }}
+              pointerEvents="none"
+            >
+              {slot}
+            </Text>
+          ))}
+        </Box>
+      </Flex>
 
       {/* Source handle for each output on the right edge */}
       {nodeInfo.outputs.map((slot, i) => (
@@ -791,7 +867,7 @@ function NodeInspector({
 
   if (!node) {
     return (
-      <Box w="280px" bg="white" borderLeft="1px solid" borderColor="gray.200" p={3}>
+      <Box w="100%" bg="white" borderLeft="1px solid" borderColor="gray.200" p={3}>
         <Text fontSize="sm" color="gray.400">Select a node to edit its parameters.</Text>
       </Box>
     )
@@ -827,7 +903,7 @@ function NodeInspector({
   }
 
   return (
-    <Box w="280px" bg="white" borderLeft="1px solid" borderColor="gray.200" p={3} overflowY="auto">
+    <Box w="100%" bg="white" borderLeft="1px solid" borderColor="gray.200" p={3} overflowY="auto">
       <Text fontWeight="bold" fontSize="sm" mb={1}>{nodeInfo.display_name}</Text>
       <Text fontSize="xs" color="gray.500" mb={3}>{nodeInfo.description}</Text>
 
@@ -1433,6 +1509,71 @@ function RunResultView({ result, hideNodeId = false }: { result: Record<string, 
                   </Box>
                 )
               }
+              // Structured plain object — render as formatted table (e.g. model metrics/feature_importance)
+              if (v && typeof v === "object" && !Array.isArray(v) && !(v as Record<string, unknown>).__type__) {
+                const obj = v as Record<string, unknown>
+                const hasMetrics = obj.metrics && typeof obj.metrics === "object" && !Array.isArray(obj.metrics)
+                const hasFI = obj.feature_importance && typeof obj.feature_importance === "object" && !Array.isArray(obj.feature_importance)
+                return (
+                  <Box key={slot} mb={2}>
+                    <Text fontSize="xs" fontWeight="semibold" color="gray.700" mb={1}><b>{slot}</b></Text>
+                    {(hasMetrics || hasFI) ? (
+                      <>
+                        {hasMetrics && (
+                          <Box mb={2}>
+                            <Text fontSize="xs" fontWeight="semibold" color="gray.500" mb={1}>Metrics</Text>
+                            <Table size="xs" variant="simple">
+                              <Tbody>
+                                {Object.entries(obj.metrics as Record<string, unknown>).map(([k, mv]) => (
+                                  <Tr key={k}>
+                                    <Td fontSize="xs" p={1} color="gray.600">{k}</Td>
+                                    <Td fontSize="xs" p={1} isNumeric color="blue.600">
+                                      {typeof mv === "number" ? mv.toFixed(4) : String(mv)}
+                                    </Td>
+                                  </Tr>
+                                ))}
+                              </Tbody>
+                            </Table>
+                          </Box>
+                        )}
+                        {hasFI && (
+                          <Box>
+                            <Text fontSize="xs" fontWeight="semibold" color="gray.500" mb={1}>Feature Importance (top 10)</Text>
+                            <Table size="xs" variant="simple">
+                              <Tbody>
+                                {Object.entries(obj.feature_importance as Record<string, unknown>)
+                                  .sort(([, a], [, b]) => Number(b) - Number(a))
+                                  .slice(0, 10)
+                                  .map(([k, mv]) => (
+                                    <Tr key={k}>
+                                      <Td fontSize="xs" p={1} color="gray.600">{k}</Td>
+                                      <Td fontSize="xs" p={1} isNumeric color="purple.600">
+                                        {typeof mv === "number" ? mv.toFixed(4) : String(mv)}
+                                      </Td>
+                                    </Tr>
+                                  ))}
+                              </Tbody>
+                            </Table>
+                          </Box>
+                        )}
+                      </>
+                    ) : (
+                      <Table size="xs" variant="simple">
+                        <Tbody>
+                          {Object.entries(obj).slice(0, 20).map(([k, mv]) => (
+                            <Tr key={k}>
+                              <Td fontSize="xs" p={1} color="gray.600">{k}</Td>
+                              <Td fontSize="xs" p={1} color="gray.800">
+                                {typeof mv === "number" ? mv.toFixed(4) : String(mv).slice(0, 60)}
+                              </Td>
+                            </Tr>
+                          ))}
+                        </Tbody>
+                      </Table>
+                    )}
+                  </Box>
+                )
+              }
               return (
                 <Text key={slot} fontSize="xs">
                   <b>{slot}:</b> {JSON.stringify(v).slice(0, 120)}
@@ -1674,6 +1815,7 @@ function GraphPage() {
   const importRef = useRef<HTMLInputElement>(null)
   const clipboardRef = useRef<GraphFlowNode | null>(null)
   const restoredLayoutSigRef = useRef<string>("")
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [nodes, setNodes, onNodesChange] = useNodesState<GraphFlowNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
@@ -1689,10 +1831,61 @@ function GraphPage() {
   // ── Collapsible panel state (persisted to localStorage) ──
   const [leftOpen, setLeftOpen] = useState<boolean>(() => localStorage.getItem("graph:leftOpen") !== "false")
   const [rightOpen, setRightOpen] = useState<boolean>(() => localStorage.getItem("graph:rightOpen") !== "false")
-  const [bottomOpen, setBottomOpen] = useState<boolean>(() => localStorage.getItem("graph:bottomOpen") !== "false")
+  const [bottomOpen, setBottomOpen] = useState<boolean>(() => localStorage.getItem("graph:bottomOpen") === "true")
   useEffect(() => { localStorage.setItem("graph:leftOpen", String(leftOpen)) }, [leftOpen])
   useEffect(() => { localStorage.setItem("graph:rightOpen", String(rightOpen)) }, [rightOpen])
   useEffect(() => { localStorage.setItem("graph:bottomOpen", String(bottomOpen)) }, [bottomOpen])
+
+  // ── Resizable inspector width (persisted to localStorage) ──
+  const [inspectorWidth, setInspectorWidth] = useState<number>(() => {
+    const stored = localStorage.getItem("graph:inspectorWidth")
+    return stored ? Math.max(200, Math.min(600, parseInt(stored))) : 280
+  })
+  useEffect(() => { localStorage.setItem("graph:inspectorWidth", String(inspectorWidth)) }, [inspectorWidth])
+
+  // ── Auto-save label (transient UI feedback) ──
+  const [autoSaveLabel, setAutoSaveLabel] = useState<string>("")
+
+  // ── Auto-restore last workflow on mount ──
+  useEffect(() => {
+    const lastId = localStorage.getItem("graph:lastWorkflowId")
+    if (!lastId) return
+    axios.get(`/api/v1/graphs/workflows/${lastId}`).then((r) => {
+      try {
+        const { nodes: n, edges: eg } = JSON.parse(r.data.graph_spec)
+        setNodes(n ?? [])
+        setEdges(eg ?? [])
+        setCurrentWorkflowId(r.data.id)
+        setSaveWorkflowName(r.data.name)
+      } catch { /* ignore */ }
+    }).catch(() => { localStorage.removeItem("graph:lastWorkflowId") })
+  // biome-ignore lint/react-hooks/exhaustive-deps: run once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ── Persist current workflow id ──
+  useEffect(() => {
+    if (currentWorkflowId) localStorage.setItem("graph:lastWorkflowId", String(currentWorkflowId))
+  }, [currentWorkflowId])
+
+  // ── Debounced auto-save for named workflows ──
+  useEffect(() => {
+    if (!currentWorkflowId || !saveWorkflowName.trim() || nodes.length === 0) return
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    autoSaveTimerRef.current = setTimeout(() => {
+      const spec = JSON.stringify({ nodes, edges })
+      axios.put(`/api/v1/graphs/workflows/${currentWorkflowId}`, { name: saveWorkflowName.trim(), graph_spec: spec })
+        .then(() => {
+          setAutoSaveLabel("Auto-saved ✓")
+          setTimeout(() => setAutoSaveLabel(""), 2000)
+          refetchWorkflows()
+        })
+        .catch(() => { /* silent: manual save still available */ })
+    }, 1500)
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current) }
+  // biome-ignore lint/react-hooks/exhaustive-deps: only re-run when canvas changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, edges, currentWorkflowId, saveWorkflowName])
 
   // 4.2 — Restore layout positions from sessionStorage when graph topology changes
   useEffect(() => {
@@ -2300,6 +2493,9 @@ function GraphPage() {
           {currentWorkflowId && (
             <Text fontSize="xs" color="blue.500" fontStyle="italic">{saveWorkflowName}</Text>
           )}
+          {autoSaveLabel && (
+            <Text fontSize="xs" color="green.500">{autoSaveLabel}</Text>
+          )}
           <Text fontSize="xs" color="gray.400">
             {nodes.length} nodes · {edges.length} edges
           </Text>
@@ -2403,15 +2599,41 @@ function GraphPage() {
             {/* Right panel: collapsible node inspector */}
             {rightOpen ? (
               <Box
+                w={`${inspectorWidth}px`}
                 flexShrink={0}
                 bg="white"
-                borderRight="1px solid"
-                borderColor="gray.300"
+                borderLeft="1px solid"
+                borderColor="gray.200"
                 overflow="visible"
                 position="relative"
                 display="flex"
                 flexDir="column"
               >
+              {/* Resize drag handle on the left edge */}
+              <Box
+                position="absolute"
+                left={0}
+                top={0}
+                bottom={0}
+                w="4px"
+                cursor="col-resize"
+                zIndex={20}
+                _hover={{ bg: "blue.200" }}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  const startX = e.clientX
+                  const startW = inspectorWidth
+                  function onMove(ev: MouseEvent) {
+                    setInspectorWidth(Math.max(200, Math.min(600, startW + (startX - ev.clientX))))
+                  }
+                  function onUp() {
+                    document.removeEventListener("mousemove", onMove)
+                    document.removeEventListener("mouseup", onUp)
+                  }
+                  document.addEventListener("mousemove", onMove)
+                  document.addEventListener("mouseup", onUp)
+                }}
+              />
               {/* </Box><Box position="relative" flexShrink={0}> */}
                 <Box
                   position="absolute"
