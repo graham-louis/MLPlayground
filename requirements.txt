@@ -6,11 +6,7 @@ seaborn
 matplotlib
 debugpy
 daymetpy
-
-# Data profiling
-ydata-profiling
-streamlit-ydata-profiling
-pygwalker
+meteostat
 
 # ML stack
 pycaret

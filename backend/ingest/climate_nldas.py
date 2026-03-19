@@ -196,3 +196,63 @@ def fetch_and_transform_weather(county_name, state_name, start_year, end_year):
     print("Daymet weather data processing complete. ✅")
     annual_df = pd.DataFrame(all_years_weather)
     return annual_df, all_daily_weather
+
+
+# Alternative weather fetcher using Meteostat
+def fetch_and_transform_weather_meteostat(county_name, state_name, start_year, end_year):
+    """
+    Fetches and processes daily weather data for a location over a range of years using Meteostat,
+    aggregating it into an annual feature set. Returns (annual_df, daily_df).
+    """
+    from meteostat import Point, Daily
+    print(f"Fetching Meteostat weather data from {start_year} to {end_year} for {county_name}, {state_name}...")
+    
+    lon_lat = get_county_center_coord(county_name, state_name)
+    if lon_lat is None:
+        print(f"  - Cannot fetch Meteostat data without coordinates for {county_name}.")
+        return None, None
+    lon, lat = lon_lat['lon'], lon_lat['lat']
+    
+    location = Point(lat, lon)
+    all_years_weather = []
+    all_daily_weather = []
+    
+    for year in range(start_year, end_year + 1):
+        print(f"{year}...")
+        start = pd.Timestamp(year=year, month=1, day=1)
+        end = pd.Timestamp(year=year, month=12, day=31)
+        
+        try:
+            daily_data = Daily(location, start, end)
+            daily_data = daily_data.fetch()
+            if daily_data.empty:
+                print(f"  - No Meteostat data for {county_name} in {year}.")
+                continue
+            daily_data.reset_index(inplace=True)
+            daily_data['Year'] = year
+            daily_data['County'] = county_name
+            all_daily_weather.append(daily_data)
+            
+            # --- Feature Engineering ---
+            growing_season = daily_data[daily_data['date'].dt.month.between(5, 9)]
+            t_avg = (growing_season['tmax'] + growing_season['tmin']) / 2
+            gdd = (t_avg - 10).clip(lower=0)
+            annual_features = {
+                'Year': year,
+                'TotalPrecip_mm': growing_season['prcp'].sum(),
+                'AvgTemp_C': growing_season['tavg'].mean(),
+                'TotalGDD': gdd.sum(),
+                'County': county_name,
+                'State': state_name
+            }
+            all_years_weather.append(annual_features)
+        except Exception as e:
+            print(f"  - Error fetching Meteostat data for {year}: {e}")
+    print("Meteostat weather data processing complete. ✅")
+    annual_df = pd.DataFrame(all_years_weather)
+    if all_daily_weather:
+        daily_df = pd.concat(all_daily_weather, ignore_index=True)
+    else:
+        daily_df = pd.DataFrame()
+   
+    return annual_df, daily_df

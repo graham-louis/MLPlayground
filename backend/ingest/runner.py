@@ -24,6 +24,10 @@ def get_counties_for_state(state_name):
 
         # Extract just the county name from "County Name, State"
         county_list = [row[0].split(" County,")[0] for row in data[1:]]
+
+        # Convert to all uppercase to match NASS API expectations
+        county_list = [c.upper() for c in county_list]
+
         return sorted(county_list)
     except requests.exceptions.RequestException as e:
         print(f"Error fetching county list: {e}")
@@ -44,11 +48,12 @@ def upsert_soil_to_db(df, engine):
         # Upsert by county and state
         obj = session.query(Soil).filter_by(county=row['County'], state=row['State']).first()
         if obj is None:
-            obj = Soil(county=row['County'], state=row['State'])
-        obj.ph = row['Soil_pH']
-        obj.organic_matter = row['OM_percent']
-        obj.sand_pct = row['PercentSand']
-        obj.clay_pct = row['PercentClay']
+            obj = Soil(county=str(row['County']), state=str(row['State']))
+        # Coerce numpy scalar types to native Python types
+        obj.ph = float(row['Soil_pH']) if pd.notnull(row.get('Soil_pH')) else None
+        obj.organic_matter = float(row['OM_percent']) if pd.notnull(row.get('OM_percent')) else None
+        obj.sand_pct = float(row['PercentSand']) if pd.notnull(row.get('PercentSand')) else None
+        obj.clay_pct = float(row['PercentClay']) if pd.notnull(row.get('PercentClay')) else None
         # silt_pct could be computed if available
         session.add(obj)
         session.commit()
@@ -69,12 +74,12 @@ def upsert_weather_to_db(df, engine):
                 year=row['Year'], county=row['County'], state=row['State']
             ).first()
             if obj is None:
-                obj = Weather(year=row['Year'], county=row['County'], state=row['State'])
-            obj.avg_temp = row.get('AvgTemp_C')
-            obj.precipitation = row.get('TotalPrecip_mm')
-            obj.gdd = row.get('TotalGDD')
-            obj.vp = row.get('vp')  # Vapor pressure
-            obj.srad = row.get('srad')  # Solar radiation
+                obj = Weather(year=int(row['Year']), county=str(row['County']), state=str(row['State']))
+            obj.avg_temp = float(row.get('AvgTemp_C')) if pd.notnull(row.get('AvgTemp_C')) else None
+            obj.precipitation = float(row.get('TotalPrecip_mm')) if pd.notnull(row.get('TotalPrecip_mm')) else None
+            obj.gdd = float(row.get('TotalGDD')) if pd.notnull(row.get('TotalGDD')) else None
+            obj.vp = float(row.get('vp')) if pd.notnull(row.get('vp')) else None  # Vapor pressure
+            obj.srad = float(row.get('srad')) if pd.notnull(row.get('srad')) else None  # Solar radiation
             session.add(obj)
             session.commit()
             # print(f"Upserted weather data for {row['County']}, {row['State']}, {row['Year']}")
@@ -94,9 +99,10 @@ def upsert_yield_to_db(df, engine):
                 year=row['Year'], county=row['County'], state=row['State'], crop=row.get('Crop', None)
             ).first()
             if obj is None:
-                obj = Yield(year=row['Year'], county=row['County'], state=row['State'], crop=row.get('Crop', None))
-            # db model uses 'value' and 'unit'
-            obj.value = row.get('CropYield_bu_ac') if row.get('CropYield_bu_ac') is not None else row.get('Value')
+                obj = Yield(year=int(row['Year']), county=str(row['County']), state=str(row['State']), crop=row.get('Crop', None))
+            # db model uses 'value' and 'unit' -- coerce numeric types
+            val = row.get('CropYield_bu_ac') if row.get('CropYield_bu_ac') is not None else row.get('Value')
+            obj.value = float(val) if pd.notnull(val) else None
             # DataItem/commodity unit may be present
             obj.unit = row.get('DataItem') or row.get('unit')
             # Set district and county_ansi if present

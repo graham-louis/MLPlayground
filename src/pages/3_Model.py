@@ -70,7 +70,8 @@ with st.container(border=True):
     col1, col2 = st.columns(2)
     with col1:
         if 'mrmr_report' in st.session_state:
-            mrmr_features = st.session_state['mrmr_report']['feature'].tolist()
+            # default to top 5 MRMR features
+            mrmr_features = st.session_state['mrmr_report']['feature'].head(5).tolist()
             exclude_cols = [target, 'year', 'district', 'county', 'crop', 'state', 'county_ansi', 'unit']
             features = [col for col in df.columns if col not in exclude_cols]
             features = st.multiselect("Features", [col for col in df.columns if col not in exclude_cols], default=mrmr_features)

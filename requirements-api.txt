@@ -6,7 +6,8 @@ requests
 # Data Handling (Needed for fetching/cleaning before DB)
 pandas
 numpy
-daymetpy 
+daymetpy
+meteostat
 
 # Database
 SQLAlchemy>=2.0

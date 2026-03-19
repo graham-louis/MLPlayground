@@ -12,10 +12,12 @@ def get_yield_data(state=None, crop=None, start_year=None, end_year=None):
     data = resp.json()
     return pd.DataFrame(data)
 
-def get_weather_data(state=None, year=None):
+def get_weather_data(state=None, year=None, start_year=None, end_year=None):
     params = {}
     if state: params['state'] = str.upper(state)
     if year: params['year'] = year
+    if start_year: params['start_year'] = start_year
+    if end_year: params['end_year'] = end_year
     resp = requests.get('http://api:8000/weather/', params=params)
     data = resp.json()
     return pd.DataFrame(data)
