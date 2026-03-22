@@ -12,8 +12,10 @@ import { noaaWeatherPlotTemplate } from "./noaaWeatherPlot"
 import { pythonCodeTransformTemplate } from "./pythonCodeTransform"
 import { ncCornYieldTemplate } from "./ncCornYield"
 import { sarimaxyieldForecastTemplate } from "./sarimaxyieldForecast"
+import { quickAnalysisTemplate } from "./quickAnalysis"
 
 export const TEMPLATES: Record<string, GraphTemplate> = {
+  "Quick Analysis (Start Here)": quickAnalysisTemplate,
   "CSV → Filter": csvFilterTemplate,
   "Yield Prediction (Weather + Soil)": yieldPredictionTemplate,
   "NC Corn Yield + Forecast (Final Goal)": ncCornYieldTemplate,

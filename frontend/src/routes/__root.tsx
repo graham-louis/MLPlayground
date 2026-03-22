@@ -28,12 +28,13 @@ function RootLayout() {
         <Flex align="center" justify="space-between" maxW={isFullBleed ? "none" : "1200px"} mx="auto">
           <Heading size="md">🌱 MLPlayground</Heading>
           <Flex gap={6}>
+            <Link href="/" color="white" fontWeight="medium">Home</Link>
+            <Link href="/ingest" color="white" fontWeight="medium">Ingest</Link>
+            <Link href="/explore" color="white" fontWeight="medium">Data Explorer</Link>
             <Link href="/graph" color="white" fontWeight="medium">Graph</Link>
             <Link href="/dashboard" color="white" fontWeight="medium">Dashboard</Link>
-            <Link href="/" color="white" fontWeight="medium">Home</Link>
-            <Link href="/explore" color="white" fontWeight="medium">Data Explorer</Link>
-            <Link href="/model" color="white" fontWeight="medium">Model</Link>
-            <Link href="/ingest" color="white" fontWeight="medium">Ingest</Link>
+            {/* <Link href="/model" color="white" fontWeight="medium">Model</Link> */}
+            
           </Flex>
         </Flex>
       </Box>

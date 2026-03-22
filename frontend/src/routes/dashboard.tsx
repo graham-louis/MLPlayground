@@ -23,6 +23,11 @@ import {
   Select,
   Spinner,
   Stack,
+  Tab,
+  TabList,
+  TabPanel,
+  TabPanels,
+  Tabs,
   Text,
   Tooltip,
 } from "@chakra-ui/react"
@@ -31,6 +36,7 @@ import { useQuery } from "@tanstack/react-query"
 import axios from "axios"
 import { useState } from "react"
 import { DashboardGrid } from "../components/dashboard/DashboardGrid"
+import { RunSummaryPanel } from "../components/dashboard/RunSummaryPanel"
 
 export const Route = createFileRoute("/dashboard")({
   component: DashboardPage,
@@ -372,7 +378,28 @@ function DashboardPage() {
                   </Text>
                 </Box>
               </Flex>
-              <DashboardGrid result={runResult.result} />
+
+              <Tabs colorScheme="green" size="sm" defaultIndex={0}>
+                <TabList mb={4} bg="white" p={1} borderRadius="lg" border="1px solid" borderColor="gray.200" w="fit-content">
+                  <Tab _selected={{ bg: "green.500", color: "white" }} fontWeight="semibold" fontSize="sm">
+                    Visualize
+                  </Tab>
+                  <Tab _selected={{ bg: "green.500", color: "white" }} fontWeight="semibold" fontSize="sm">
+                    Summary
+                  </Tab>
+                </TabList>
+                <TabPanels>
+                  <TabPanel p={0}>
+                    <DashboardGrid result={runResult.result} />
+                  </TabPanel>
+                  <TabPanel p={0}>
+                    <RunSummaryPanel
+                      result={runResult.result}
+                      nodeStatuses={runResult.node_statuses ?? {}}
+                    />
+                  </TabPanel>
+                </TabPanels>
+              </Tabs>
             </>
           )}
         </Box>
